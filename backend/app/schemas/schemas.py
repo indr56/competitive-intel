@@ -186,6 +186,39 @@ class CaptureNowRequest(BaseModel):
     pass
 
 
+# ── Insight ──
+
+
+class InsightRead(ORMBase):
+    id: uuid.UUID
+    change_event_id: uuid.UUID
+    insight_type: str
+    version: int
+    prompt_template_id: str
+    content: dict[str, Any]
+    evidence_refs: list[str] | None
+    is_grounded: bool
+    validation_errors: list[str] | None
+    model_used: str | None
+    provider: str | None
+    token_count_input: int | None
+    token_count_output: int | None
+    cost_usd: float | None
+    latency_ms: int | None
+    regeneration_reason: str | None
+    regenerated_from_id: uuid.UUID | None
+    created_at: datetime
+
+
+class InsightRegenerateRequest(BaseModel):
+    reason: str = "manual"
+    custom_instructions: str | None = None
+
+
+class InsightGenerateRequest(BaseModel):
+    insight_types: list[str] | None = None
+
+
 class PaginatedResponse(BaseModel):
     items: list[Any]
     total: int
