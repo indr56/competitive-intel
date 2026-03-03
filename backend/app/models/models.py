@@ -70,6 +70,7 @@ class User(Base):
     account_id = Column(UUID(as_uuid=True), ForeignKey("accounts.id"), nullable=False)
     email = Column(String(320), unique=True, nullable=False)
     role = Column(String(50), default="member")  # admin | member | viewer
+    digest_unsubscribed = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     account = relationship("Account", back_populates="users")
@@ -88,6 +89,7 @@ class Workspace(Base):
     competitors = relationship("Competitor", back_populates="workspace", cascade="all, delete-orphan")
     change_events = relationship("ChangeEvent", back_populates="workspace")
     digests = relationship("Digest", back_populates="workspace", cascade="all, delete-orphan")
+    white_label_config = relationship("WhiteLabelConfig", back_populates="workspace", uselist=False, cascade="all, delete-orphan")
 
 
 # ── Competitive intel ──
@@ -190,11 +192,35 @@ class Digest(Base):
     period_start = Column(DateTime(timezone=True), nullable=False)
     period_end = Column(DateTime(timezone=True), nullable=False)
     change_event_ids = Column(ARRAY(UUID(as_uuid=True)), nullable=False, default=[])
+    ranking_data = Column(JSONB, nullable=True)
+    html_body = Column(Text, nullable=True)
+    markdown_body = Column(Text, nullable=True)
     email_sent_at = Column(DateTime(timezone=True), nullable=True)
     web_view_token = Column(String(128), unique=True, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     workspace = relationship("Workspace", back_populates="digests")
+
+
+# ── White-Label Config ──
+
+
+class WhiteLabelConfig(Base):
+    __tablename__ = "white_label_configs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False, unique=True,
+    )
+    logo_url = Column(Text, nullable=True)
+    brand_color = Column(String(7), default="#111827")
+    sender_name = Column(String(255), nullable=True)
+    sender_email = Column(String(320), nullable=True)
+    company_name = Column(String(255), nullable=True)
+    footer_text = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    workspace = relationship("Workspace", back_populates="white_label_config")
 
 
 # ── AI Insights ──
