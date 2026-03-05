@@ -24,6 +24,16 @@ export default function SettingsPage() {
   useEffect(() => {
     if (!activeId) return;
     setLoading(true);
+    setError(null);
+    setSaved(false);
+    setForm({
+      logo_url: "",
+      brand_color: "#111827",
+      sender_name: "",
+      sender_email: "",
+      company_name: "",
+      footer_text: "",
+    });
     whiteLabel
       .get(activeId)
       .then((wl) => {

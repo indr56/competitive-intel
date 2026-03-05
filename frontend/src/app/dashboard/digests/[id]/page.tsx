@@ -125,7 +125,7 @@ export default function DigestDetailPage() {
                         : "bg-green-50 text-green-700"
                     }`}
                   >
-                    {r.severity.toUpperCase()}
+                    {(r.severity ?? "medium").toUpperCase()}
                   </span>
                   <span className="text-xs text-gray-500 font-mono">
                     {r.change_event_id.slice(0, 8)}...

@@ -13,10 +13,15 @@ export default function DashboardPage() {
   const [comps, setComps] = useState<Competitor[]>([]);
   const [latestDigests, setLatestDigests] = useState<Digest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!activeId) return;
     setLoading(true);
+    setError(null);
+    setRecentChanges([]);
+    setComps([]);
+    setLatestDigests([]);
     Promise.all([
       changes.list({ workspace_id: activeId, limit: 5 }),
       competitors.list(activeId),
@@ -27,7 +32,7 @@ export default function DashboardPage() {
         setComps(comp);
         setLatestDigests(d.slice(0, 3));
       })
-      .catch(console.error)
+      .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [activeId]);
 
@@ -54,6 +59,12 @@ export default function DashboardPage() {
       <h1 className="text-2xl font-bold text-gray-900">
         {active?.name ?? "Dashboard"}
       </h1>
+
+      {error && (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
       {/* Stat cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

@@ -27,6 +27,7 @@ export default function CompetitorDetailPage() {
   const [form, setForm] = useState({ url: "", page_type: "pricing" as PageType });
   const [submitting, setSubmitting] = useState(false);
   const [capturing, setCapturing] = useState<string | null>(null);
+  const [captureResult, setCaptureResult] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -60,8 +61,14 @@ export default function CompetitorDetailPage() {
 
   const handleCapture = async (pageId: string) => {
     setCapturing(pageId);
+    setCaptureResult(null);
     try {
-      await pagesApi.captureNow(pageId, true);
+      const res = await pagesApi.captureNow(pageId, true);
+      const status = (res as any).status ?? "done";
+      setCaptureResult(
+        status === "no_change" ? "Captured — no changes detected" : "Captured — changes detected!"
+      );
+      setTimeout(() => setCaptureResult(null), 4000);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -115,6 +122,12 @@ export default function CompetitorDetailPage() {
       {error && (
         <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-2 text-sm text-red-700">
           {error}
+        </div>
+      )}
+
+      {captureResult && (
+        <div className="rounded-lg bg-green-50 border border-green-200 px-4 py-2 text-sm text-green-700">
+          {captureResult}
         </div>
       )}
 

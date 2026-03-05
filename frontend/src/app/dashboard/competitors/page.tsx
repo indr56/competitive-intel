@@ -19,6 +19,8 @@ export default function CompetitorsPage() {
   useEffect(() => {
     if (!activeId) return;
     setLoading(true);
+    setError(null);
+    setComps([]);
     compApi
       .list(activeId)
       .then(setComps)

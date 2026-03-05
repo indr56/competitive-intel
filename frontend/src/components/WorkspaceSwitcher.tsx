@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ChevronDown, Plus, Check } from "lucide-react";
 import { useActiveWorkspace } from "@/lib/hooks";
 import { workspaces as wsApi } from "@/lib/api";
+import { invalidateWorkspaceCache } from "@/lib/hooks";
 
 export default function WorkspaceSwitcher() {
   const { active, activeId, setActive, workspaces, loading } =
@@ -11,16 +12,23 @@ export default function WorkspaceSwitcher() {
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   const handleCreate = async () => {
     if (!name.trim()) return;
-    const slug = name.trim().toLowerCase().replace(/\s+/g, "-");
-    const ws = await wsApi.create({ name: name.trim(), slug });
-    setActive(ws.id);
-    setName("");
-    setCreating(false);
-    setOpen(false);
-    window.location.reload();
+    setError(null);
+    try {
+      const slug = name.trim().toLowerCase().replace(/\s+/g, "-");
+      const ws = await wsApi.create({ name: name.trim(), slug });
+      invalidateWorkspaceCache();
+      setActive(ws.id);
+      setName("");
+      setCreating(false);
+      setOpen(false);
+      window.location.reload();
+    } catch (e: any) {
+      setError(e.message ?? "Failed to create workspace");
+    }
   };
 
   if (loading) {
@@ -69,6 +77,9 @@ export default function WorkspaceSwitcher() {
               ))}
             </div>
             <div className="border-t p-2">
+              {error && (
+                <p className="px-2 py-1 text-[10px] text-red-600 mb-1">{error}</p>
+              )}
               {creating ? (
                 <div className="flex gap-1.5">
                   <input

@@ -36,6 +36,7 @@ export default function ChangeFeedPage() {
 
   useEffect(() => {
     if (!activeId) return;
+    setCompsMap({});
     compApi.list(activeId).then((list) => {
       const map: Record<string, Competitor> = {};
       list.forEach((c) => (map[c.id] = c));
@@ -46,6 +47,7 @@ export default function ChangeFeedPage() {
   useEffect(() => {
     if (!activeId) return;
     setLoading(true);
+    setEvents([]);
     changesApi
       .list({
         workspace_id: activeId,

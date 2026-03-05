@@ -14,11 +14,10 @@ import {
 } from "lucide-react";
 import {
   changes as changesApi,
-  snapshots,
   insights as insightsApi,
   competitors as compApi,
 } from "@/lib/api";
-import type { ChangeEvent, Snapshot, Insight, Competitor } from "@/lib/types";
+import type { ChangeEvent, Insight, Competitor } from "@/lib/types";
 
 const SEV_COLORS: Record<string, string> = {
   critical: "bg-red-50 text-red-700",
@@ -33,8 +32,6 @@ export default function ChangeDetailPage() {
   const [change, setChange] = useState<ChangeEvent | null>(null);
   const [comp, setComp] = useState<Competitor | null>(null);
   const [insightsList, setInsights] = useState<Insight[]>([]);
-  const [beforeSnap, setBeforeSnap] = useState<Snapshot | null>(null);
-  const [afterSnap, setAfterSnap] = useState<Snapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);

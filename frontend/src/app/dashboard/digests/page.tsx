@@ -17,6 +17,8 @@ export default function DigestsPage() {
   useEffect(() => {
     if (!activeId) return;
     setLoading(true);
+    setError(null);
+    setList([]);
     digestApi
       .list(activeId)
       .then(setList)

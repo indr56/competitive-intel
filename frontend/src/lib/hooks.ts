@@ -14,6 +14,10 @@ function notify() {
   _listeners.forEach((fn) => fn());
 }
 
+export function invalidateWorkspaceCache() {
+  _cachedWorkspaces = null;
+}
+
 export function useWorkspaces() {
   const [wsList, setWsList] = useState<Workspace[]>(_cachedWorkspaces ?? []);
   const [loading, setLoading] = useState(!_cachedWorkspaces);

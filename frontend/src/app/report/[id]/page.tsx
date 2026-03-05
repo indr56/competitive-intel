@@ -1,10 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { API_URL } from "@/lib/api";
 
 export default function PublicReportPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-gray-50">
+          <div className="text-center">
+            <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600 mx-auto mb-4" />
+            <p className="text-sm text-gray-500">Loading report...</p>
+          </div>
+        </div>
+      }
+    >
+      <ReportContent />
+    </Suspense>
+  );
+}
+
+function ReportContent() {
   const params = useParams();
   const searchParams = useSearchParams();
   const id = params.id as string;
