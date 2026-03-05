@@ -27,6 +27,17 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = ""
     EMAIL_FROM: str = "notifications@yourdomain.com"
 
+    # Razorpay
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_WEBHOOK_SECRET: str = ""
+    RAZORPAY_STARTER_PLAN_ID: str = ""
+    RAZORPAY_PRO_PLAN_ID: str = ""
+    RAZORPAY_AGENCY_PLAN_ID: str = ""
+
+    # Billing
+    ANNUAL_DISCOUNT_PCT: float = 0.25  # 25% off for annual billing
+
     # App
     APP_ENV: Literal["development", "staging", "production"] = "development"
     APP_SECRET_KEY: str = "change-me-in-production"

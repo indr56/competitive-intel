@@ -21,6 +21,20 @@ from app.core.database import Base
 import enum
 
 
+class PlanType(str, enum.Enum):
+    STARTER = "starter"
+    PRO = "pro"
+    AGENCY = "agency"
+
+
+class SubscriptionStatus(str, enum.Enum):
+    TRIALING = "trialing"
+    ACTIVE = "active"
+    PAST_DUE = "past_due"
+    CANCELED = "canceled"
+    INCOMPLETE = "incomplete"
+
+
 class PageType(str, enum.Enum):
     PRICING = "pricing"
     HOME_HERO = "home_hero"
@@ -90,6 +104,7 @@ class Workspace(Base):
     change_events = relationship("ChangeEvent", back_populates="workspace")
     digests = relationship("Digest", back_populates="workspace", cascade="all, delete-orphan")
     white_label_config = relationship("WhiteLabelConfig", back_populates="workspace", uselist=False, cascade="all, delete-orphan")
+    billing = relationship("WorkspaceBilling", back_populates="workspace", uselist=False, cascade="all, delete-orphan")
 
 
 # ── Competitive intel ──
@@ -273,3 +288,47 @@ class Insight(Base):
 
     change_event = relationship("ChangeEvent", back_populates="insights")
     regenerated_from = relationship("Insight", remote_side="Insight.id")
+
+
+# ── Billing ──
+
+
+class WorkspaceBilling(Base):
+    __tablename__ = "workspace_billing"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False, unique=True,
+    )
+    plan_type = Column(String(50), default=PlanType.STARTER.value, nullable=False)
+    subscription_status = Column(
+        String(50), default=SubscriptionStatus.TRIALING.value, nullable=False,
+    )
+    currency = Column(String(10), default="USD", nullable=False, server_default="USD")
+    billing_interval = Column(String(10), default="month", nullable=False, server_default="month")
+    plan_price = Column(Integer, nullable=True)
+    razorpay_customer_id = Column(String(255), nullable=True, unique=True)
+    razorpay_subscription_id = Column(String(255), nullable=True, unique=True)
+    trial_ends_at = Column(DateTime(timezone=True), nullable=True)
+    current_period_end = Column(DateTime(timezone=True), nullable=True)
+    cancel_at_period_end = Column(Boolean, default=False)
+    grace_period_ends_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    workspace = relationship("Workspace", back_populates="billing")
+
+
+class WebhookEvent(Base):
+    __tablename__ = "webhook_events"
+    __table_args__ = (
+        UniqueConstraint("razorpay_event_id", name="uq_razorpay_event_id"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    razorpay_event_id = Column(String(255), nullable=False)
+    event_type = Column(String(100), nullable=False)
+    payload = Column(JSONB, nullable=False)
+    processed = Column(Boolean, default=False)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

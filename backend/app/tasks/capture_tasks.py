@@ -5,7 +5,8 @@ from datetime import datetime, timedelta, timezone
 
 from app.tasks.celery_app import celery_app
 from app.core.database import SessionLocal
-from app.models.models import TrackedPage
+from app.core.plan_enforcement import can_capture
+from app.models.models import Competitor, TrackedPage
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,9 @@ def check_due_pages() -> dict:
         )
 
         dispatched = 0
+        skipped_billing = 0
+        # Cache workspace billing checks
+        ws_billing_cache: dict[str, bool] = {}
         for page in pages:
             if page.last_checked_at is not None:
                 last_checked = page.last_checked_at
@@ -33,6 +37,16 @@ def check_due_pages() -> dict:
                     last_checked = last_checked.replace(tzinfo=timezone.utc)
                 next_check = last_checked + timedelta(hours=page.check_interval_hours)
                 if now < next_check:
+                    continue
+
+            # Check workspace billing status
+            comp = db.query(Competitor).filter(Competitor.id == page.competitor_id).first()
+            if comp:
+                ws_id = str(comp.workspace_id)
+                if ws_id not in ws_billing_cache:
+                    ws_billing_cache[ws_id] = can_capture(comp.workspace_id, db)
+                if not ws_billing_cache[ws_id]:
+                    skipped_billing += 1
                     continue
 
             from app.tasks.pipeline_tasks import run_page_pipeline

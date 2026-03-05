@@ -212,3 +212,83 @@ export interface SignedUrlResponse {
   signed_url: string;
   digest_id: string;
 }
+
+// ── Billing ──
+
+export interface PlanLimits {
+  max_competitors: number;
+  max_tracked_pages: number;
+  min_check_interval_hours: number;
+  white_label: boolean;
+  max_workspaces: number;
+}
+
+export interface IntervalPricing {
+  month: number;
+  year: number;
+}
+
+export interface PlanPricing {
+  USD: IntervalPricing;
+  INR: IntervalPricing;
+}
+
+export interface PlanInfo {
+  plan_type: string;
+  name: string;
+  price_monthly_cents: number;
+  pricing: PlanPricing;
+  annual_discount_pct: number;
+  limits: PlanLimits;
+}
+
+export interface WorkspaceBilling {
+  id: string;
+  workspace_id: string;
+  plan_type: string;
+  subscription_status: string;
+  currency: string;
+  billing_interval: string;
+  plan_price: number | null;
+  razorpay_customer_id: string | null;
+  razorpay_subscription_id: string | null;
+  trial_ends_at: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  grace_period_ends_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BillingOverview {
+  billing: WorkspaceBilling | null;
+  plan: PlanInfo;
+  usage: {
+    competitors: number;
+    competitors_limit: number;
+    tracked_pages: number;
+    tracked_pages_limit: number;
+  };
+}
+
+export interface CheckoutSessionResponse {
+  subscription_id: string;
+  razorpay_key_id: string;
+  short_url: string | null;
+  workspace_id: string;
+  plan_type: string;
+  currency: string;
+  interval: string;
+  plan_price: number;
+}
+
+export interface PaymentVerifyRequest {
+  razorpay_subscription_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}
+
+export interface PaymentVerifyResponse {
+  verified: boolean;
+  subscription_status: string;
+}

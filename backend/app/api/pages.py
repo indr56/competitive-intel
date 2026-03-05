@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.plan_enforcement import enforce_billing_active, enforce_tracked_page_limit
 from app.models.models import Competitor, TrackedPage
 from app.schemas.schemas import TrackedPageCreate, TrackedPageRead, TrackedPageUpdate
 
@@ -26,6 +27,9 @@ def create_tracked_page(
     competitor = db.query(Competitor).filter(Competitor.id == competitor_id).first()
     if not competitor:
         raise HTTPException(status_code=404, detail="Competitor not found")
+
+    # Plan enforcement
+    enforce_tracked_page_limit(competitor.workspace_id, db)
 
     existing = (
         db.query(TrackedPage)

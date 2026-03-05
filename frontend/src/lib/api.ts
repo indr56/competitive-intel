@@ -1,5 +1,7 @@
 import type {
+  BillingOverview,
   ChangeEvent,
+  CheckoutSessionResponse,
   Competitor,
   CompetitorCreate,
   CompetitorUpdate,
@@ -10,6 +12,8 @@ import type {
   Insight,
   InsightGenerateRequest,
   InsightRegenerateRequest,
+  PaymentVerifyResponse,
+  PlanInfo,
   SignedUrlResponse,
   Snapshot,
   TrackedPage,
@@ -218,6 +222,48 @@ export const whiteLabel = {
     request<WhiteLabelConfig>(
       `/api/workspaces/${workspaceId}/white-label`,
       { method: "PUT", body: JSON.stringify(data) }
+    ),
+};
+
+// ── Billing ──
+
+export const billing = {
+  plans: () => request<PlanInfo[]>("/api/billing/plans"),
+  overview: (workspaceId: string) =>
+    request<BillingOverview>(`/api/workspaces/${workspaceId}/billing`),
+  checkout: (workspaceId: string, planType: string, currency: string = "USD", interval: string = "month") =>
+    request<CheckoutSessionResponse>(
+      `/api/workspaces/${workspaceId}/billing/checkout`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          plan_type: planType,
+          currency,
+          interval,
+        }),
+      }
+    ),
+  verify: (
+    workspaceId: string,
+    data: {
+      razorpay_subscription_id: string;
+      razorpay_payment_id: string;
+      razorpay_signature: string;
+    }
+  ) =>
+    request<PaymentVerifyResponse>(
+      `/api/workspaces/${workspaceId}/billing/verify`,
+      { method: "POST", body: JSON.stringify(data) }
+    ),
+  cancel: (workspaceId: string) =>
+    request<Record<string, unknown>>(
+      `/api/workspaces/${workspaceId}/billing/cancel`,
+      { method: "POST" }
+    ),
+  sync: (workspaceId: string) =>
+    request<Record<string, unknown>>(
+      `/api/workspaces/${workspaceId}/billing/sync`,
+      { method: "POST" }
     ),
 };
 

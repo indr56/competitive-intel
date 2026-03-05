@@ -29,6 +29,9 @@ boto3>=1.34.0,<2.0
 # Email
 httpx>=0.25.0,<1.0
 
+# Payments
+razorpay>=1.4.0,<2.0
+
 # Utilities
 python-dotenv>=1.0.0,<2.0
 eval_type_backport>=0.2.0
