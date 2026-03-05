@@ -213,6 +213,50 @@ export interface SignedUrlResponse {
   digest_id: string;
 }
 
+// ── Competitor Events (Multi-Signal) ──
+
+export interface CompetitorEvent {
+  id: string;
+  workspace_id: string;
+  competitor_id: string;
+  signal_type: string;
+  title: string;
+  description: string | null;
+  source_url: string | null;
+  event_time: string;
+  metadata_json: Record<string, unknown> | null;
+  ai_summary: string | null;
+  ai_implications: string | null;
+  severity: string;
+  is_processed: boolean;
+  created_at: string;
+}
+
+export interface ActivityFeedItem {
+  id: string;
+  source: "change_event" | "competitor_event";
+  workspace_id: string;
+  competitor_id: string;
+  competitor_name: string | null;
+  signal_type: string;
+  title: string;
+  description: string | null;
+  severity: string | null;
+  source_url: string | null;
+  event_time: string;
+  created_at: string;
+}
+
+export type SignalType =
+  | "website_change"
+  | "pricing_change"
+  | "product_change"
+  | "blog_post"
+  | "hiring"
+  | "funding"
+  | "review"
+  | "marketing";
+
 // ── Billing ──
 
 export interface PlanLimits {

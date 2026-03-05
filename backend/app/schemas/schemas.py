@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.models import PageType, Severity
+from app.models.models import PageType, Severity, SignalType
 
 
 # ── Mixins ──
@@ -251,6 +251,52 @@ class PaginatedResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+# ── Competitor Events (Multi-Signal) ──
+
+
+class CompetitorEventCreate(BaseModel):
+    signal_type: str
+    title: str
+    description: str | None = None
+    source_url: str | None = None
+    event_time: datetime | None = None
+    metadata_json: dict[str, Any] | None = None
+    severity: str = "medium"
+
+
+class CompetitorEventRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    competitor_id: uuid.UUID
+    signal_type: str
+    title: str
+    description: str | None
+    source_url: str | None
+    event_time: datetime
+    metadata_json: dict[str, Any] | None
+    ai_summary: str | None
+    ai_implications: str | None
+    severity: str
+    is_processed: bool
+    created_at: datetime
+
+
+class ActivityFeedItem(BaseModel):
+    """Unified feed item that can represent either a ChangeEvent or CompetitorEvent."""
+    id: str
+    source: str  # "change_event" or "competitor_event"
+    workspace_id: str
+    competitor_id: str
+    competitor_name: str | None = None
+    signal_type: str
+    title: str
+    description: str | None = None
+    severity: str | None = None
+    source_url: str | None = None
+    event_time: datetime
+    created_at: datetime
 
 
 # ── Billing ──

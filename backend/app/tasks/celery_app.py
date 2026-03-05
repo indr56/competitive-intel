@@ -29,11 +29,28 @@ celery_app.conf.update(
             "task": "app.tasks.digest_tasks.send_all_weekly_digests",
             "schedule": crontab(minute=0, hour=9, day_of_week=1),  # Monday 9am UTC
         },
+        "collect-blog-signals": {
+            "task": "app.tasks.signal_tasks.run_blog_collector",
+            "schedule": crontab(minute=0, hour="*/6"),  # every 6 hours
+        },
+        "collect-hiring-signals": {
+            "task": "app.tasks.signal_tasks.run_hiring_collector",
+            "schedule": crontab(minute=30, hour="*/12"),  # every 12 hours
+        },
+        "collect-funding-signals": {
+            "task": "app.tasks.signal_tasks.run_funding_collector",
+            "schedule": crontab(minute=0, hour="*/12"),  # every 12 hours
+        },
+        "collect-review-signals": {
+            "task": "app.tasks.signal_tasks.run_review_collector",
+            "schedule": crontab(minute=0, hour=3),  # daily at 3am UTC
+        },
     },
     task_routes={
         "app.tasks.capture_tasks.*": {"queue": "capture"},
         "app.tasks.digest_tasks.*": {"queue": "default"},
         "app.tasks.pipeline_tasks.*": {"queue": "default"},
+        "app.tasks.signal_tasks.*": {"queue": "default"},
     },
 )
 

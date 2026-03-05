@@ -1,10 +1,12 @@
 import type {
+  ActivityFeedItem,
   BillingOverview,
   ChangeEvent,
   CheckoutSessionResponse,
   Competitor,
   CompetitorCreate,
   CompetitorUpdate,
+  CompetitorEvent,
   Diff,
   Digest,
   DigestGenerateResponse,
@@ -223,6 +225,36 @@ export const whiteLabel = {
       `/api/workspaces/${workspaceId}/white-label`,
       { method: "PUT", body: JSON.stringify(data) }
     ),
+};
+
+// ── Events (Multi-Signal) ──
+
+export const events = {
+  list: (workspaceId: string, params?: { signal_type?: string; competitor_id?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.signal_type) qs.set("signal_type", params.signal_type);
+    if (params?.competitor_id) qs.set("competitor_id", params.competitor_id);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return request<CompetitorEvent[]>(`/api/workspaces/${workspaceId}/events${q ? `?${q}` : ""}`);
+  },
+  forCompetitor: (competitorId: string, signalType?: string) => {
+    const qs = signalType ? `?signal_type=${signalType}` : "";
+    return request<CompetitorEvent[]>(`/api/competitors/${competitorId}/events${qs}`);
+  },
+  get: (eventId: string) => request<CompetitorEvent>(`/api/events/${eventId}`),
+  signalTypes: () => request<string[]>("/api/events/signal-types"),
+};
+
+export const activityFeed = {
+  list: (workspaceId: string, params?: { signal_type?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.signal_type) qs.set("signal_type", params.signal_type);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<ActivityFeedItem[]>(`/api/workspaces/${workspaceId}/activity${q ? `?${q}` : ""}`);
+  },
 };
 
 // ── Billing ──
