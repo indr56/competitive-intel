@@ -33,6 +33,7 @@ export default function ChangeFeedPage() {
   const [loading, setLoading] = useState(true);
   const [severity, setSeverity] = useState("");
   const [category, setCategory] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!activeId) return;
@@ -48,6 +49,7 @@ export default function ChangeFeedPage() {
     if (!activeId) return;
     setLoading(true);
     setEvents([]);
+    setError(null);
     changesApi
       .list({
         workspace_id: activeId,
@@ -56,7 +58,7 @@ export default function ChangeFeedPage() {
         limit: 50,
       })
       .then(setEvents)
-      .catch(console.error)
+      .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [activeId, severity, category]);
 
@@ -92,6 +94,12 @@ export default function ChangeFeedPage() {
           </select>
         </div>
       </div>
+
+      {error && (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
       {loading ? (
         <div className="space-y-3">

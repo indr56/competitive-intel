@@ -29,7 +29,9 @@ export default function CompetitorsPage() {
   }, [activeId]);
 
   const handleAdd = async () => {
-    if (!form.name.trim() || !form.domain.trim() || !activeId) return;
+    if (!activeId) { setError("No workspace selected."); return; }
+    if (!form.name.trim()) { setError("Competitor name is required."); return; }
+    if (!form.domain.trim()) { setError("Domain is required."); return; }
     setSubmitting(true);
     setError(null);
     try {

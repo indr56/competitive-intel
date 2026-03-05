@@ -15,7 +15,7 @@ export default function WorkspaceSwitcher() {
   const [error, setError] = useState<string | null>(null);
 
   const handleCreate = async () => {
-    if (!name.trim()) return;
+    if (!name.trim()) { setError("Name is required."); return; }
     setError(null);
     try {
       const slug = name.trim().toLowerCase().replace(/\s+/g, "-");

@@ -8,6 +8,7 @@ import type { Workspace } from "./types";
 
 let _cachedWorkspaces: Workspace[] | null = null;
 let _activeWorkspaceId: string | null = null;
+let _fetching = false;
 const _listeners = new Set<() => void>();
 
 function notify() {
@@ -16,42 +17,53 @@ function notify() {
 
 export function invalidateWorkspaceCache() {
   _cachedWorkspaces = null;
+  _fetching = false;
+}
+
+function ensureFetched() {
+  if (_cachedWorkspaces || _fetching) return;
+  _fetching = true;
+  workspaces
+    .list()
+    .then((data) => {
+      _cachedWorkspaces = data;
+      if (data.length > 0 && !_activeWorkspaceId) {
+        _activeWorkspaceId = data[0].id;
+      }
+      notify();
+    })
+    .catch(() => {
+      _fetching = false;
+    });
 }
 
 export function useWorkspaces() {
-  const [wsList, setWsList] = useState<Workspace[]>(_cachedWorkspaces ?? []);
-  const [loading, setLoading] = useState(!_cachedWorkspaces);
-  const [error, setError] = useState<string | null>(null);
+  const [, rerender] = useState(0);
+  const wsList = _cachedWorkspaces ?? [];
+  const loading = !_cachedWorkspaces;
 
   useEffect(() => {
-    if (_cachedWorkspaces) return;
-    setLoading(true);
-    workspaces
-      .list()
-      .then((data) => {
-        _cachedWorkspaces = data;
-        setWsList(data);
-        if (data.length > 0 && !_activeWorkspaceId) {
-          _activeWorkspaceId = data[0].id;
-          notify();
-        }
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+    const handler = () => rerender((n) => n + 1);
+    _listeners.add(handler);
+    ensureFetched();
+    return () => { _listeners.delete(handler); };
   }, []);
 
-  return { workspaces: wsList, loading, error };
+  return { workspaces: wsList, loading, error: null as string | null };
 }
 
 export function useActiveWorkspace() {
-  const [activeId, setActiveId] = useState<string | null>(_activeWorkspaceId);
+  const [, rerender] = useState(0);
   const { workspaces: wsList, loading } = useWorkspaces();
 
   useEffect(() => {
-    const handler = () => setActiveId(_activeWorkspaceId);
+    const handler = () => rerender((n) => n + 1);
     _listeners.add(handler);
     return () => { _listeners.delete(handler); };
   }, []);
+
+  // Always read from the global — never stale
+  const activeId = _activeWorkspaceId;
 
   const setActive = useCallback((id: string) => {
     _activeWorkspaceId = id;

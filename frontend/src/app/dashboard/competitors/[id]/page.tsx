@@ -41,7 +41,7 @@ export default function CompetitorDetailPage() {
   }, [id]);
 
   const handleAddPage = async () => {
-    if (!form.url.trim()) return;
+    if (!form.url.trim()) { setError("URL is required."); return; }
     setSubmitting(true);
     setError(null);
     try {
