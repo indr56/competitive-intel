@@ -28,12 +28,15 @@ from app.core.billing import (
     PLAN_DEFINITIONS,
     RAZORPAY_STATUS_MAP,
     SUPPORTED_CURRENCIES,
+    SUPPORTED_INTERVALS,
     get_plan_limits,
     get_plan_info,
     get_plan_price,
     is_billing_active,
     map_razorpay_status,
     ACTIVE_STATUSES,
+    _compute_annual_price,
+    _get_annual_discount,
 )
 from app.core.plan_enforcement import (
     get_workspace_billing,
@@ -146,6 +149,9 @@ class TestPlanDefinitions:
         assert "pricing" in info
         assert "USD" in info["pricing"]
         assert "INR" in info["pricing"]
+        assert "month" in info["pricing"]["USD"]
+        assert "year" in info["pricing"]["USD"]
+        assert "annual_discount_pct" in info
 
 
 # ═══════════════════════════════════════════════
@@ -193,8 +199,8 @@ class TestDualPricing:
 
     def test_plan_info_includes_pricing(self):
         info = get_plan_info("starter")
-        assert info["pricing"]["USD"] == 4900
-        assert info["pricing"]["INR"] == 199900
+        assert info["pricing"]["USD"]["month"] == 4900
+        assert info["pricing"]["INR"]["month"] == 199900
 
 
 # ═══════════════════════════════════════════════
@@ -383,11 +389,14 @@ class TestBillingAPI:
         # Verify razorpay fields are present
         assert "razorpay_customer_id" in data["billing"]
         assert "razorpay_subscription_id" in data["billing"]
-        # Verify currency and pricing fields
+        # Verify currency, interval, and pricing fields
         assert data["billing"]["currency"] == "USD"
+        assert data["billing"]["billing_interval"] == "month"
         assert "pricing" in data["plan"]
-        assert data["plan"]["pricing"]["USD"] == 4900
-        assert data["plan"]["pricing"]["INR"] == 199900
+        assert data["plan"]["pricing"]["USD"]["month"] == 4900
+        assert data["plan"]["pricing"]["INR"]["month"] == 199900
+        assert "year" in data["plan"]["pricing"]["USD"]
+        assert "annual_discount_pct" in data["plan"]
 
     def test_billing_overview_not_found(self):
         fake_id = uuid.uuid4()
@@ -496,7 +505,7 @@ class TestBillingAPI:
         assert billing.plan_price == 1499900
 
     def test_plans_endpoint_includes_pricing(self):
-        """Verify /api/billing/plans returns pricing with both currencies."""
+        """Verify /api/billing/plans returns pricing with both currencies and intervals."""
         resp = client.get("/api/billing/plans")
         assert resp.status_code == 200
         plans = resp.json()
@@ -504,6 +513,11 @@ class TestBillingAPI:
             assert "pricing" in plan
             assert "USD" in plan["pricing"]
             assert "INR" in plan["pricing"]
+            assert "month" in plan["pricing"]["USD"]
+            assert "year" in plan["pricing"]["USD"]
+            assert "month" in plan["pricing"]["INR"]
+            assert "year" in plan["pricing"]["INR"]
+            assert "annual_discount_pct" in plan
 
     def test_verify_payment_success(self, workspace, db):
         """Test payment verification with mocked signature check."""
@@ -884,3 +898,200 @@ class TestRegression:
         resp = client.get("/api/billing/plans")
         assert resp.status_code == 200
         assert len(resp.json()) == 3
+
+
+# ═══════════════════════════════════════════════
+# 9. Annual pricing + interval tests
+# ═══════════════════════════════════════════════
+
+
+class TestAnnualPricing:
+    def test_supported_intervals(self):
+        assert "month" in SUPPORTED_INTERVALS
+        assert "year" in SUPPORTED_INTERVALS
+
+    def test_annual_discount_default(self):
+        discount = _get_annual_discount()
+        assert 0.0 < discount < 1.0
+
+    def test_compute_annual_price(self):
+        # 4900 cents/mo * 12 * 0.75 = 44100
+        annual = _compute_annual_price(4900)
+        discount = _get_annual_discount()
+        expected = round(4900 * 12 * (1 - discount))
+        assert annual == expected
+
+    def test_annual_price_less_than_12x_monthly(self):
+        for plan_type in PLAN_DEFINITIONS:
+            for currency in ("USD", "INR"):
+                monthly = get_plan_price(plan_type, currency, "month")
+                annual = get_plan_price(plan_type, currency, "year")
+                assert annual < monthly * 12, f"{plan_type}/{currency}: annual not discounted"
+
+    def test_get_plan_price_monthly(self):
+        assert get_plan_price("starter", "USD", "month") == 4900
+        assert get_plan_price("pro", "USD", "month") == 14900
+        assert get_plan_price("agency", "USD", "month") == 39900
+
+    def test_get_plan_price_annual_usd(self):
+        discount = _get_annual_discount()
+        assert get_plan_price("starter", "USD", "year") == round(4900 * 12 * (1 - discount))
+        assert get_plan_price("pro", "USD", "year") == round(14900 * 12 * (1 - discount))
+        assert get_plan_price("agency", "USD", "year") == round(39900 * 12 * (1 - discount))
+
+    def test_get_plan_price_annual_inr(self):
+        discount = _get_annual_discount()
+        assert get_plan_price("starter", "INR", "year") == round(199900 * 12 * (1 - discount))
+        assert get_plan_price("pro", "INR", "year") == round(599900 * 12 * (1 - discount))
+        assert get_plan_price("agency", "INR", "year") == round(1499900 * 12 * (1 - discount))
+
+    def test_plan_info_has_annual_pricing(self):
+        for plan_type in PLAN_DEFINITIONS:
+            info = get_plan_info(plan_type)
+            for currency in ("USD", "INR"):
+                assert "month" in info["pricing"][currency]
+                assert "year" in info["pricing"][currency]
+                assert info["pricing"][currency]["year"] < info["pricing"][currency]["month"] * 12
+
+    def test_plan_info_has_discount_pct(self):
+        info = get_plan_info("starter")
+        assert "annual_discount_pct" in info
+        assert info["annual_discount_pct"] == _get_annual_discount()
+
+    def test_plans_api_annual_prices(self):
+        resp = client.get("/api/billing/plans")
+        assert resp.status_code == 200
+        plans = resp.json()
+        for plan in plans:
+            usd_month = plan["pricing"]["USD"]["month"]
+            usd_year = plan["pricing"]["USD"]["year"]
+            inr_month = plan["pricing"]["INR"]["month"]
+            inr_year = plan["pricing"]["INR"]["year"]
+            assert usd_year < usd_month * 12
+            assert inr_year < inr_month * 12
+
+
+# ═══════════════════════════════════════════════
+# 10. Checkout with interval tests
+# ═══════════════════════════════════════════════
+
+
+class TestCheckoutInterval:
+    def test_checkout_default_monthly(self, workspace):
+        """Default checkout should use month interval."""
+        mock_subscription = {
+            "subscription_id": "sub_month_default",
+            "short_url": "",
+            "status": "created",
+        }
+        with patch("app.api.billing.get_settings") as mock_settings, \
+             patch("app.api.billing.create_razorpay_customer", return_value="cust_m"), \
+             patch("app.api.billing.create_razorpay_subscription", return_value=mock_subscription):
+            mock_settings.return_value.RAZORPAY_KEY_ID = "rzp_test_xxx"
+            resp = client.post(
+                f"/api/workspaces/{workspace.id}/billing/checkout",
+                json={"plan_type": "pro"},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["interval"] == "month"
+            assert data["plan_price"] == 14900
+
+    def test_checkout_annual_usd(self, workspace):
+        """Checkout with year interval should return annual price."""
+        mock_subscription = {
+            "subscription_id": "sub_annual_usd",
+            "short_url": "",
+            "status": "created",
+        }
+        with patch("app.api.billing.get_settings") as mock_settings, \
+             patch("app.api.billing.create_razorpay_customer", return_value="cust_a"), \
+             patch("app.api.billing.create_razorpay_subscription", return_value=mock_subscription):
+            mock_settings.return_value.RAZORPAY_KEY_ID = "rzp_test_xxx"
+            resp = client.post(
+                f"/api/workspaces/{workspace.id}/billing/checkout",
+                json={"plan_type": "pro", "currency": "USD", "interval": "year"},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["interval"] == "year"
+            assert data["currency"] == "USD"
+            expected = get_plan_price("pro", "USD", "year")
+            assert data["plan_price"] == expected
+
+    def test_checkout_annual_inr(self, workspace):
+        """Checkout with year interval + INR currency."""
+        mock_subscription = {
+            "subscription_id": "sub_annual_inr",
+            "short_url": "",
+            "status": "created",
+        }
+        with patch("app.api.billing.get_settings") as mock_settings, \
+             patch("app.api.billing.create_razorpay_customer", return_value="cust_ainr"), \
+             patch("app.api.billing.create_razorpay_subscription", return_value=mock_subscription):
+            mock_settings.return_value.RAZORPAY_KEY_ID = "rzp_test_xxx"
+            resp = client.post(
+                f"/api/workspaces/{workspace.id}/billing/checkout",
+                json={"plan_type": "starter", "currency": "INR", "interval": "year"},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["interval"] == "year"
+            assert data["currency"] == "INR"
+            expected = get_plan_price("starter", "INR", "year")
+            assert data["plan_price"] == expected
+
+    def test_checkout_invalid_interval(self, workspace):
+        """Checkout with invalid interval should return 400."""
+        with patch("app.api.billing.get_settings") as mock_settings:
+            mock_settings.return_value.RAZORPAY_KEY_ID = "rzp_test_xxx"
+            resp = client.post(
+                f"/api/workspaces/{workspace.id}/billing/checkout",
+                json={"plan_type": "pro", "interval": "weekly"},
+            )
+            assert resp.status_code == 400
+            assert "Unsupported interval" in resp.json()["detail"]
+
+    def test_checkout_stores_interval_on_billing(self, workspace, db):
+        """Checkout stores billing_interval on the billing record."""
+        mock_subscription = {
+            "subscription_id": "sub_store_interval",
+            "short_url": "",
+            "status": "created",
+        }
+        with patch("app.api.billing.get_settings") as mock_settings, \
+             patch("app.api.billing.create_razorpay_customer", return_value="cust_si"), \
+             patch("app.api.billing.create_razorpay_subscription", return_value=mock_subscription):
+            mock_settings.return_value.RAZORPAY_KEY_ID = "rzp_test_xxx"
+            resp = client.post(
+                f"/api/workspaces/{workspace.id}/billing/checkout",
+                json={"plan_type": "agency", "currency": "INR", "interval": "year"},
+            )
+            assert resp.status_code == 200
+
+        db.expire_all()
+        billing = get_workspace_billing(workspace.id, db)
+        assert billing.billing_interval == "year"
+        assert billing.currency == "INR"
+        assert billing.plan_price == get_plan_price("agency", "INR", "year")
+
+    def test_checkout_passes_interval_to_razorpay(self, workspace):
+        """Verify interval is passed through to create_razorpay_subscription."""
+        mock_subscription = {
+            "subscription_id": "sub_interval_pass",
+            "short_url": "",
+            "status": "created",
+        }
+        with patch("app.api.billing.get_settings") as mock_settings, \
+             patch("app.api.billing.create_razorpay_customer", return_value="cust_ip"), \
+             patch("app.api.billing.create_razorpay_subscription", return_value=mock_subscription) as mock_create:
+            mock_settings.return_value.RAZORPAY_KEY_ID = "rzp_test_xxx"
+            resp = client.post(
+                f"/api/workspaces/{workspace.id}/billing/checkout",
+                json={"plan_type": "pro", "currency": "USD", "interval": "year"},
+            )
+            assert resp.status_code == 200
+            mock_create.assert_called_once()
+            call_kwargs = mock_create.call_args
+            # interval should be passed as keyword arg
+            assert call_kwargs[1].get("interval") == "year" or (len(call_kwargs[0]) >= 5 and call_kwargs[0][4] == "year")

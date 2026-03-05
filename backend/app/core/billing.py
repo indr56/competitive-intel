@@ -90,6 +90,7 @@ PLAN_DEFINITIONS: dict[str, dict[str, Any]] = {
 }
 
 SUPPORTED_CURRENCIES = {"USD", "INR"}
+SUPPORTED_INTERVALS = {"month", "year"}
 
 TRIAL_DAYS = 14
 GRACE_PERIOD_DAYS = 7
@@ -118,26 +119,51 @@ def get_plan_limits(plan_type: str) -> dict[str, Any]:
     return plan["limits"]
 
 
+def _get_annual_discount() -> float:
+    """Get annual discount from settings, default 0.25."""
+    try:
+        settings = get_settings()
+        return settings.ANNUAL_DISCOUNT_PCT
+    except Exception:
+        return 0.25
+
+
+def _compute_annual_price(monthly_price: int) -> int:
+    """Compute annual price from monthly with discount."""
+    discount = _get_annual_discount()
+    return round(monthly_price * 12 * (1 - discount))
+
+
 def get_plan_info(plan_type: str) -> dict[str, Any]:
-    """Get full plan info dict."""
+    """Get full plan info dict with monthly + annual pricing for all currencies."""
     plan = PLAN_DEFINITIONS.get(plan_type, PLAN_DEFINITIONS["starter"])
+    monthly_pricing = plan.get("pricing", {"USD": plan["price_monthly_cents"]})
+    pricing = {}
+    for currency, monthly_amount in monthly_pricing.items():
+        pricing[currency] = {
+            "month": monthly_amount,
+            "year": _compute_annual_price(monthly_amount),
+        }
     return {
         "plan_type": plan_type,
         "name": plan["name"],
         "price_monthly_cents": plan["price_monthly_cents"],
-        "pricing": plan.get("pricing", {"USD": plan["price_monthly_cents"]}),
+        "pricing": pricing,
+        "annual_discount_pct": _get_annual_discount(),
         "limits": plan["limits"],
     }
 
 
-def get_plan_price(plan_type: str, currency: str) -> int:
-    """Get plan price in smallest currency unit for the given currency."""
+def get_plan_price(plan_type: str, currency: str, interval: str = "month") -> int:
+    """Get plan price in smallest currency unit for the given currency and interval."""
     plan = PLAN_DEFINITIONS.get(plan_type, PLAN_DEFINITIONS["starter"])
     pricing = plan.get("pricing", {})
-    price = pricing.get(currency.upper())
-    if price is None:
+    monthly_price = pricing.get(currency.upper())
+    if monthly_price is None:
         raise ValueError(f"No {currency} pricing for plan: {plan_type}")
-    return price
+    if interval == "year":
+        return _compute_annual_price(monthly_price)
+    return monthly_price
 
 
 def is_billing_active(status: str, grace_period_ends_at: datetime | None = None) -> bool:
@@ -197,6 +223,7 @@ def create_razorpay_subscription(
     plan_type: str,
     workspace_id: str,
     currency: str = "USD",
+    interval: str = "month",
 ) -> dict[str, Any]:
     """
     Create a Razorpay Subscription.
@@ -206,14 +233,17 @@ def create_razorpay_subscription(
     client = _get_razorpay_client()
     razorpay_plan_id = get_razorpay_plan_id(plan_type)
 
+    total_count = 10 if interval == "year" else 120  # 10 years
+
     subscription_data: dict[str, Any] = {
         "plan_id": razorpay_plan_id,
         "customer_id": razorpay_customer_id,
-        "total_count": 120,  # max billing cycles (10 years monthly)
+        "total_count": total_count,
         "notes": {
             "workspace_id": workspace_id,
             "plan_type": plan_type,
             "currency": currency,
+            "interval": interval,
         },
     }
 

@@ -223,9 +223,14 @@ export interface PlanLimits {
   max_workspaces: number;
 }
 
+export interface IntervalPricing {
+  month: number;
+  year: number;
+}
+
 export interface PlanPricing {
-  USD: number;
-  INR: number;
+  USD: IntervalPricing;
+  INR: IntervalPricing;
 }
 
 export interface PlanInfo {
@@ -233,6 +238,7 @@ export interface PlanInfo {
   name: string;
   price_monthly_cents: number;
   pricing: PlanPricing;
+  annual_discount_pct: number;
   limits: PlanLimits;
 }
 
@@ -242,6 +248,7 @@ export interface WorkspaceBilling {
   plan_type: string;
   subscription_status: string;
   currency: string;
+  billing_interval: string;
   plan_price: number | null;
   razorpay_customer_id: string | null;
   razorpay_subscription_id: string | null;
@@ -271,6 +278,7 @@ export interface CheckoutSessionResponse {
   workspace_id: string;
   plan_type: string;
   currency: string;
+  interval: string;
   plan_price: number;
 }
 

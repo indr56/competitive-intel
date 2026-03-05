@@ -231,7 +231,7 @@ export const billing = {
   plans: () => request<PlanInfo[]>("/api/billing/plans"),
   overview: (workspaceId: string) =>
     request<BillingOverview>(`/api/workspaces/${workspaceId}/billing`),
-  checkout: (workspaceId: string, planType: string, currency: string = "USD") =>
+  checkout: (workspaceId: string, planType: string, currency: string = "USD", interval: string = "month") =>
     request<CheckoutSessionResponse>(
       `/api/workspaces/${workspaceId}/billing/checkout`,
       {
@@ -239,6 +239,7 @@ export const billing = {
         body: JSON.stringify({
           plan_type: planType,
           currency,
+          interval,
         }),
       }
     ),

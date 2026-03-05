@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     RAZORPAY_PRO_PLAN_ID: str = ""
     RAZORPAY_AGENCY_PLAN_ID: str = ""
 
+    # Billing
+    ANNUAL_DISCOUNT_PCT: float = 0.25  # 25% off for annual billing
+
     # App
     APP_ENV: Literal["development", "staging", "production"] = "development"
     APP_SECRET_KEY: str = "change-me-in-production"

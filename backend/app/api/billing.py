@@ -23,6 +23,7 @@ from app.core.billing import (
     GRACE_PERIOD_DAYS,
     PLAN_DEFINITIONS,
     SUPPORTED_CURRENCIES,
+    SUPPORTED_INTERVALS,
     create_razorpay_customer,
     create_razorpay_subscription,
     cancel_razorpay_subscription,
@@ -137,7 +138,11 @@ def create_checkout(
     if currency not in SUPPORTED_CURRENCIES:
         raise HTTPException(status_code=400, detail=f"Unsupported currency: {currency}. Supported: {', '.join(SUPPORTED_CURRENCIES)}")
 
-    plan_price = get_plan_price(payload.plan_type, currency)
+    interval = payload.interval.lower()
+    if interval not in SUPPORTED_INTERVALS:
+        raise HTTPException(status_code=400, detail=f"Unsupported interval: {interval}. Supported: {', '.join(SUPPORTED_INTERVALS)}")
+
+    plan_price = get_plan_price(payload.plan_type, currency, interval)
 
     billing = get_workspace_billing(workspace_id, db)
 
@@ -154,12 +159,14 @@ def create_checkout(
         plan_type=payload.plan_type,
         workspace_id=str(workspace_id),
         currency=currency,
+        interval=interval,
     )
 
-    # Store subscription ID, currency, and price immediately
+    # Store subscription ID, currency, interval, and price immediately
     billing.razorpay_subscription_id = result["subscription_id"]
     billing.plan_type = payload.plan_type
     billing.currency = currency
+    billing.billing_interval = interval
     billing.plan_price = plan_price
     db.commit()
 
@@ -170,6 +177,7 @@ def create_checkout(
         workspace_id=str(workspace_id),
         plan_type=payload.plan_type,
         currency=currency,
+        interval=interval,
         plan_price=plan_price,
     )
 

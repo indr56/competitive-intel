@@ -11,9 +11,6 @@ import {
   Building2,
   XCircle,
   RefreshCw,
-  IndianRupee,
-  DollarSign,
-  X,
 } from "lucide-react";
 import { useActiveWorkspace } from "@/lib/hooks";
 import { billing as billingApi } from "@/lib/api";
@@ -24,6 +21,12 @@ declare global {
     Razorpay: any;
   }
 }
+
+type Currency = "USD" | "INR";
+type Interval = "month" | "year";
+
+const STORAGE_KEY_CURRENCY = "billing_currency";
+const STORAGE_KEY_INTERVAL = "billing_interval";
 
 const STATUS_COLORS: Record<string, string> = {
   trialing: "bg-blue-50 text-blue-700",
@@ -53,6 +56,24 @@ function formatPrice(amountSmallest: number, currency: string): string {
   return `$${amount.toLocaleString("en-US")}`;
 }
 
+function getSavedCurrency(): Currency {
+  if (typeof window === "undefined") return "USD";
+  const saved = localStorage.getItem(STORAGE_KEY_CURRENCY);
+  if (saved === "INR") return "INR";
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (tz?.startsWith("Asia/Kolkata") || tz?.startsWith("Asia/Calcutta")) return "INR";
+  } catch {}
+  return "USD";
+}
+
+function getSavedInterval(): Interval {
+  if (typeof window === "undefined") return "month";
+  const saved = localStorage.getItem(STORAGE_KEY_INTERVAL);
+  if (saved === "year") return "year";
+  return "month";
+}
+
 export default function BillingPage() {
   const { activeId } = useActiveWorkspace();
   const [overview, setOverview] = useState<BillingOverview | null>(null);
@@ -62,7 +83,23 @@ export default function BillingPage() {
   const [checkingOut, setCheckingOut] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [currencyModal, setCurrencyModal] = useState<string | null>(null);
+  const [currency, setCurrency] = useState<Currency>("USD");
+  const [interval, setInterval] = useState<Interval>("month");
+
+  useEffect(() => {
+    setCurrency(getSavedCurrency());
+    setInterval(getSavedInterval());
+  }, []);
+
+  const handleCurrencyChange = (c: Currency) => {
+    setCurrency(c);
+    localStorage.setItem(STORAGE_KEY_CURRENCY, c);
+  };
+
+  const handleIntervalChange = (i: Interval) => {
+    setInterval(i);
+    localStorage.setItem(STORAGE_KEY_INTERVAL, i);
+  };
 
   const fetchBilling = useCallback(() => {
     if (!activeId) return;
@@ -81,24 +118,19 @@ export default function BillingPage() {
     fetchBilling();
   }, [fetchBilling]);
 
-  const handleUpgrade = (planType: string) => {
-    setCurrencyModal(planType);
-  };
-
-  const handleCurrencySelect = async (currency: "USD" | "INR") => {
-    const planType = currencyModal;
-    setCurrencyModal(null);
-    if (!activeId || !planType) return;
+  const handleUpgrade = async (planType: string) => {
+    if (!activeId) return;
     setCheckingOut(planType);
     setError(null);
     try {
-      const res = await billingApi.checkout(activeId, planType, currency);
+      const res = await billingApi.checkout(activeId, planType, currency, interval);
 
+      const intervalLabel = interval === "year" ? "Annual" : "Monthly";
       const options = {
         key: res.razorpay_key_id,
         subscription_id: res.subscription_id,
         name: "Competitive Moves Intelligence",
-        description: `${planType.charAt(0).toUpperCase() + planType.slice(1)} Plan`,
+        description: `${planType.charAt(0).toUpperCase() + planType.slice(1)} Plan · ${intervalLabel}`,
         currency,
         handler: async (response: {
           razorpay_subscription_id: string;
@@ -190,7 +222,10 @@ export default function BillingPage() {
 
   const currentPlan = overview?.billing?.plan_type ?? "starter";
   const billingCurrency = overview?.billing?.currency ?? "USD";
+  const billingInterval = overview?.billing?.billing_interval ?? "month";
   const status = overview?.billing?.subscription_status ?? "trialing";
+  const discountPct = plans[0]?.annual_discount_pct ?? 0.25;
+  const discountLabel = `${Math.round(discountPct * 100)}%`;
 
   const currentPriceDisplay = overview?.billing?.plan_price
     ? formatPrice(overview.billing.plan_price, billingCurrency)
@@ -247,7 +282,7 @@ export default function BillingPage() {
               </span>
             </div>
             <p className="text-sm text-gray-500">
-              {currentPriceDisplay}/month
+              {currentPriceDisplay}/{billingInterval === "year" ? "year" : "month"}
               {overview?.billing?.trial_ends_at && status === "trialing" && (
                 <span className="ml-2 text-blue-600">
                   · Trial ends {new Date(overview.billing.trial_ends_at).toLocaleDateString()}
@@ -291,20 +326,42 @@ export default function BillingPage() {
         )}
       </div>
 
-      {/* Plan Cards */}
+      {/* Plan Cards Section */}
       <div>
-        <h2 className="text-lg font-semibold text-gray-900 mb-3">
-          Available Plans
-        </h2>
-        <p className="text-xs text-gray-500 mb-4">
-          Regional pricing available for Indian customers. Select your currency at checkout.
-        </p>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">Available Plans</h2>
+          <div className="flex items-center gap-3">
+            {/* Currency Toggle */}
+            <ToggleGroup
+              options={[
+                { value: "USD", label: "USD" },
+                { value: "INR", label: "INR" },
+              ]}
+              value={currency}
+              onChange={(v) => handleCurrencyChange(v as Currency)}
+            />
+            {/* Interval Toggle */}
+            <ToggleGroup
+              options={[
+                { value: "month", label: "Monthly" },
+                { value: "year", label: `Annual (-${discountLabel})` },
+              ]}
+              value={interval}
+              onChange={(v) => handleIntervalChange(v as Interval)}
+            />
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {plans.map((plan) => {
             const isCurrent = plan.plan_type === currentPlan;
             const isUpgrade =
               plans.findIndex((p) => p.plan_type === currentPlan) <
               plans.findIndex((p) => p.plan_type === plan.plan_type);
+
+            const price = plan.pricing[currency]?.[interval] ?? plan.price_monthly_cents;
+            const monthlyPrice = plan.pricing[currency]?.month ?? plan.price_monthly_cents;
+            const perMonthEffective = interval === "year" ? Math.round(price / 12) : price;
 
             return (
               <div
@@ -333,19 +390,21 @@ export default function BillingPage() {
                 </div>
 
                 {/* Pricing */}
-                <div className="mb-4 space-y-1">
+                <div className="mb-4">
                   <div className="flex items-baseline gap-1">
                     <span className="text-3xl font-bold text-gray-900">
-                      ${(plan.pricing.USD / 100).toLocaleString("en-US")}
+                      {formatPrice(price, currency)}
                     </span>
-                    <span className="text-sm text-gray-400">/mo</span>
-                  </div>
-                  <div className="flex items-baseline gap-1">
-                    <span className="text-base font-semibold text-amber-700">
-                      {"\u20B9"}{(plan.pricing.INR / 100).toLocaleString("en-IN")}
+                    <span className="text-sm text-gray-400">
+                      /{interval === "year" ? "yr" : "mo"}
                     </span>
-                    <span className="text-xs text-gray-400">/mo</span>
                   </div>
+                  {interval === "year" && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {formatPrice(perMonthEffective, currency)}/mo effective
+                      <span className="ml-1.5 text-green-600 font-medium">Save {discountLabel}</span>
+                    </p>
+                  )}
                 </div>
 
                 {/* Features */}
@@ -375,9 +434,12 @@ export default function BillingPage() {
                     {checkingOut === plan.plan_type ? (
                       "Processing..."
                     ) : isUpgrade ? (
-                      <>Upgrade <ArrowUpRight className="h-3.5 w-3.5" /></>
+                      <>
+                        Upgrade ({interval === "year" ? "Annual" : "Monthly"})
+                        <ArrowUpRight className="h-3.5 w-3.5" />
+                      </>
                     ) : (
-                      "Switch Plan"
+                      `Switch Plan (${interval === "year" ? "Annual" : "Monthly"})`
                     )}
                   </button>
                 )}
@@ -391,21 +453,39 @@ export default function BillingPage() {
       <p className="text-xs text-gray-400 text-center">
         Payments powered by Razorpay · UPI, Cards, Netbanking &amp; Wallets
       </p>
-
-      {/* Currency Selection Modal */}
-      {currencyModal && (
-        <CurrencyModal
-          planType={currencyModal}
-          plans={plans}
-          onSelect={handleCurrencySelect}
-          onClose={() => setCurrencyModal(null)}
-        />
-      )}
     </div>
   );
 }
 
 /* ── Sub-components ── */
+
+function ToggleGroup({
+  options,
+  value,
+  onChange,
+}: {
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          onClick={() => onChange(opt.value)}
+          className={`px-3 py-1 text-xs font-medium rounded-md transition ${
+            value === opt.value
+              ? "bg-white text-gray-900 shadow-sm"
+              : "text-gray-500 hover:text-gray-700"
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function UsageBar({ label, used, limit }: { label: string; used: number; limit: number }) {
   const pct = limit > 0 ? Math.min((used / limit) * 100, 100) : 0;
@@ -429,77 +509,5 @@ function LimitItem({ label }: { label: string }) {
       <Check className="h-3.5 w-3.5 text-green-500 flex-shrink-0" />
       {label}
     </li>
-  );
-}
-
-function CurrencyModal({
-  planType,
-  plans,
-  onSelect,
-  onClose,
-}: {
-  planType: string;
-  plans: PlanInfo[];
-  onSelect: (currency: "USD" | "INR") => void;
-  onClose: () => void;
-}) {
-  const plan = plans.find((p) => p.plan_type === planType);
-  if (!plan) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/30" onClick={onClose} />
-      <div className="relative bg-white rounded-xl shadow-xl w-full max-w-sm mx-4 overflow-hidden">
-        {/* Modal Header */}
-        <div className="flex items-center justify-between px-5 pt-5 pb-3">
-          <div>
-            <h3 className="text-base font-semibold text-gray-900">
-              Select currency
-            </h3>
-            <p className="text-xs text-gray-500 mt-0.5">
-              {plan.name} Plan
-            </p>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition p-1">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Currency options */}
-        <div className="px-5 pb-5 space-y-2">
-          <button
-            onClick={() => onSelect("USD")}
-            className="w-full flex items-center gap-4 rounded-lg border border-gray-200 hover:border-gray-900 p-4 transition group text-left"
-          >
-            <div className="h-10 w-10 rounded-full bg-gray-100 flex items-center justify-center group-hover:bg-gray-900 transition">
-              <DollarSign className="h-5 w-5 text-gray-600 group-hover:text-white transition" />
-            </div>
-            <div className="flex-1">
-              <p className="text-lg font-bold text-gray-900">
-                ${(plan.pricing.USD / 100).toLocaleString("en-US")}
-                <span className="text-sm font-normal text-gray-400"> /mo</span>
-              </p>
-              <p className="text-xs text-gray-500">USD · International cards</p>
-            </div>
-          </button>
-
-          <button
-            onClick={() => onSelect("INR")}
-            className="w-full flex items-center gap-4 rounded-lg border border-gray-200 hover:border-amber-500 p-4 transition group text-left"
-          >
-            <div className="h-10 w-10 rounded-full bg-amber-50 flex items-center justify-center group-hover:bg-amber-500 transition">
-              <IndianRupee className="h-5 w-5 text-amber-600 group-hover:text-white transition" />
-            </div>
-            <div className="flex-1">
-              <p className="text-lg font-bold text-gray-900">
-                {"\u20B9"}{(plan.pricing.INR / 100).toLocaleString("en-IN")}
-                <span className="text-sm font-normal text-gray-400"> /mo</span>
-              </p>
-              <p className="text-xs text-gray-500">INR · UPI, Cards, Netbanking, Wallets</p>
-            </div>
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }

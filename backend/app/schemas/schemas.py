@@ -264,9 +264,14 @@ class PlanLimits(BaseModel):
     max_workspaces: int
 
 
+class IntervalPricing(BaseModel):
+    month: int
+    year: int
+
+
 class PlanPricing(BaseModel):
-    USD: int
-    INR: int
+    USD: IntervalPricing
+    INR: IntervalPricing
 
 
 class PlanInfo(BaseModel):
@@ -274,6 +279,7 @@ class PlanInfo(BaseModel):
     name: str
     price_monthly_cents: int
     pricing: PlanPricing
+    annual_discount_pct: float
     limits: PlanLimits
 
 
@@ -283,6 +289,7 @@ class WorkspaceBillingRead(ORMBase):
     plan_type: str
     subscription_status: str
     currency: str
+    billing_interval: str
     plan_price: int | None
     razorpay_customer_id: str | None
     razorpay_subscription_id: str | None
@@ -303,6 +310,7 @@ class BillingOverview(BaseModel):
 class CheckoutSessionRequest(BaseModel):
     plan_type: str
     currency: str = "USD"
+    interval: str = "month"
     success_url: str | None = None
     cancel_url: str | None = None
 
@@ -314,6 +322,7 @@ class CheckoutSessionResponse(BaseModel):
     workspace_id: str
     plan_type: str
     currency: str
+    interval: str
     plan_price: int
 
 
