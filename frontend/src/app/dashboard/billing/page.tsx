@@ -53,6 +53,7 @@ export default function BillingPage() {
   const [checkingOut, setCheckingOut] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [currencyModal, setCurrencyModal] = useState<string | null>(null); // plan_type being upgraded
 
   const fetchBilling = useCallback(() => {
     if (!activeId) return;
@@ -71,19 +72,26 @@ export default function BillingPage() {
     fetchBilling();
   }, [fetchBilling]);
 
-  const handleUpgrade = async (planType: string) => {
-    if (!activeId) return;
+  const handleUpgrade = (planType: string) => {
+    setCurrencyModal(planType);
+  };
+
+  const handleCurrencySelect = async (currency: "USD" | "INR") => {
+    const planType = currencyModal;
+    setCurrencyModal(null);
+    if (!activeId || !planType) return;
     setCheckingOut(planType);
     setError(null);
     try {
-      const res = await billingApi.checkout(activeId, planType);
+      const res = await billingApi.checkout(activeId, planType, currency);
 
       // Open Razorpay Checkout
       const options = {
         key: res.razorpay_key_id,
         subscription_id: res.subscription_id,
         name: "Competitive Moves Intelligence",
-        description: `${planType.charAt(0).toUpperCase() + planType.slice(1)} Plan`,
+        description: `${planType.charAt(0).toUpperCase() + planType.slice(1)} Plan (${currency})`,
+        currency,
         handler: async (response: {
           razorpay_subscription_id: string;
           razorpay_payment_id: string;
@@ -299,15 +307,27 @@ export default function BillingPage() {
 
       {/* Plan Cards */}
       <div>
-        <h2 className="text-lg font-semibold text-gray-900 mb-3">
-          Available Plans
-        </h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold text-gray-900">
+            Available Plans
+          </h2>
+          <span className="text-xs text-gray-500 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">
+            🇮🇳 Regional pricing available for Indian customers
+          </span>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {plans.map((plan) => {
             const isCurrent = plan.plan_type === currentPlan;
             const isUpgrade =
               plans.findIndex((p) => p.plan_type === currentPlan) <
               plans.findIndex((p) => p.plan_type === plan.plan_type);
+
+            const usdPrice = plan.pricing?.USD
+              ? (plan.pricing.USD / 100).toFixed(0)
+              : (plan.price_monthly_cents / 100).toFixed(0);
+            const inrPrice = plan.pricing?.INR
+              ? (plan.pricing.INR / 100).toFixed(0)
+              : null;
 
             return (
               <div
@@ -339,10 +359,23 @@ export default function BillingPage() {
                 </div>
 
                 <div className="mb-4">
-                  <span className="text-3xl font-bold text-gray-900">
-                    ${(plan.price_monthly_cents / 100).toFixed(0)}
-                  </span>
-                  <span className="text-sm text-gray-500">/mo</span>
+                  <div>
+                    <span className="text-3xl font-bold text-gray-900">
+                      ${usdPrice}
+                    </span>
+                    <span className="text-sm text-gray-500">/mo</span>
+                  </div>
+                  {inrPrice && (
+                    <div className="mt-1">
+                      <span className="text-lg font-semibold text-gray-700">
+                        ₹{inrPrice}
+                      </span>
+                      <span className="text-sm text-gray-500">/mo</span>
+                      <span className="ml-1.5 text-[11px] text-amber-600 font-medium">
+                        India pricing
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <ul className="space-y-2 mb-5 text-sm">
@@ -395,6 +428,16 @@ export default function BillingPage() {
           })}
         </div>
       </div>
+
+      {/* Currency Selection Modal */}
+      {currencyModal && (
+        <CurrencyModal
+          planType={currencyModal}
+          plans={plans}
+          onSelect={handleCurrencySelect}
+          onClose={() => setCurrencyModal(null)}
+        />
+      )}
     </div>
   );
 }
@@ -435,5 +478,88 @@ function LimitItem({ label }: { label: string }) {
       <Check className="h-3.5 w-3.5 text-green-500 flex-shrink-0" />
       {label}
     </li>
+  );
+}
+
+function CurrencyModal({
+  planType,
+  plans,
+  onSelect,
+  onClose,
+}: {
+  planType: string;
+  plans: PlanInfo[];
+  onSelect: (currency: "USD" | "INR") => void;
+  onClose: () => void;
+}) {
+  const plan = plans.find((p) => p.plan_type === planType);
+  const planName = plan?.name ?? planType;
+  const usdPrice = plan?.pricing?.USD
+    ? (plan.pricing.USD / 100).toFixed(0)
+    : plan
+      ? (plan.price_monthly_cents / 100).toFixed(0)
+      : "—";
+  const inrPrice = plan?.pricing?.INR
+    ? (plan.pricing.INR / 100).toFixed(0)
+    : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-1">
+          Choose currency
+        </h3>
+        <p className="text-sm text-gray-500 mb-5">
+          Select your preferred currency for the <strong>{planName}</strong> plan.
+        </p>
+
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            onClick={() => onSelect("USD")}
+            className="flex flex-col items-center gap-2 rounded-xl border-2 border-gray-200 hover:border-gray-900 p-5 transition group"
+          >
+            <span className="text-2xl font-bold text-gray-900 group-hover:text-gray-900">
+              ${usdPrice}
+            </span>
+            <span className="text-sm text-gray-500">/month</span>
+            <span className="mt-1 text-xs font-medium bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+              USD
+            </span>
+            <span className="text-[11px] text-gray-400">
+              International cards
+            </span>
+          </button>
+
+          {inrPrice && (
+            <button
+              onClick={() => onSelect("INR")}
+              className="flex flex-col items-center gap-2 rounded-xl border-2 border-gray-200 hover:border-amber-500 p-5 transition group"
+            >
+              <span className="text-2xl font-bold text-gray-900 group-hover:text-amber-700">
+                ₹{inrPrice}
+              </span>
+              <span className="text-sm text-gray-500">/month</span>
+              <span className="mt-1 text-xs font-medium bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">
+                INR
+              </span>
+              <span className="text-[11px] text-gray-400">
+                UPI, Cards, Netbanking, Wallets
+              </span>
+            </button>
+          )}
+        </div>
+
+        <button
+          onClick={onClose}
+          className="mt-4 w-full text-center text-sm text-gray-500 hover:text-gray-700 transition"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }

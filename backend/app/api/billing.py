@@ -22,12 +22,14 @@ from app.core.database import get_db
 from app.core.billing import (
     GRACE_PERIOD_DAYS,
     PLAN_DEFINITIONS,
+    SUPPORTED_CURRENCIES,
     create_razorpay_customer,
     create_razorpay_subscription,
     cancel_razorpay_subscription,
     fetch_razorpay_subscription,
     get_plan_info,
     get_plan_limits,
+    get_plan_price,
     map_razorpay_status,
     verify_payment_signature,
     verify_webhook_signature,
@@ -131,6 +133,12 @@ def create_checkout(
     if payload.plan_type not in PLAN_DEFINITIONS:
         raise HTTPException(status_code=400, detail=f"Invalid plan: {payload.plan_type}")
 
+    currency = payload.currency.upper()
+    if currency not in SUPPORTED_CURRENCIES:
+        raise HTTPException(status_code=400, detail=f"Unsupported currency: {currency}. Supported: {', '.join(SUPPORTED_CURRENCIES)}")
+
+    plan_price = get_plan_price(payload.plan_type, currency)
+
     billing = get_workspace_billing(workspace_id, db)
 
     # Create Razorpay customer if not exists
@@ -145,11 +153,14 @@ def create_checkout(
         razorpay_customer_id=billing.razorpay_customer_id,
         plan_type=payload.plan_type,
         workspace_id=str(workspace_id),
+        currency=currency,
     )
 
-    # Store subscription ID immediately
+    # Store subscription ID, currency, and price immediately
     billing.razorpay_subscription_id = result["subscription_id"]
     billing.plan_type = payload.plan_type
+    billing.currency = currency
+    billing.plan_price = plan_price
     db.commit()
 
     return CheckoutSessionResponse(
@@ -158,6 +169,8 @@ def create_checkout(
         short_url=result.get("short_url"),
         workspace_id=str(workspace_id),
         plan_type=payload.plan_type,
+        currency=currency,
+        plan_price=plan_price,
     )
 
 

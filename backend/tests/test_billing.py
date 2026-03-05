@@ -27,8 +27,10 @@ from app.models.models import (
 from app.core.billing import (
     PLAN_DEFINITIONS,
     RAZORPAY_STATUS_MAP,
+    SUPPORTED_CURRENCIES,
     get_plan_limits,
     get_plan_info,
+    get_plan_price,
     is_billing_active,
     map_razorpay_status,
     ACTIVE_STATUSES,
@@ -141,6 +143,58 @@ class TestPlanDefinitions:
         assert info["name"] == "Pro"
         assert info["price_monthly_cents"] == 14900
         assert "limits" in info
+        assert "pricing" in info
+        assert "USD" in info["pricing"]
+        assert "INR" in info["pricing"]
+
+
+# ═══════════════════════════════════════════════
+# 1b. Dual pricing tests
+# ═══════════════════════════════════════════════
+
+
+class TestDualPricing:
+    def test_supported_currencies(self):
+        assert "USD" in SUPPORTED_CURRENCIES
+        assert "INR" in SUPPORTED_CURRENCIES
+
+    def test_all_plans_have_both_currencies(self):
+        for plan_type, plan in PLAN_DEFINITIONS.items():
+            assert "pricing" in plan, f"{plan_type} missing pricing"
+            assert "USD" in plan["pricing"], f"{plan_type} missing USD"
+            assert "INR" in plan["pricing"], f"{plan_type} missing INR"
+
+    def test_usd_pricing_values(self):
+        assert get_plan_price("starter", "USD") == 4900
+        assert get_plan_price("pro", "USD") == 14900
+        assert get_plan_price("agency", "USD") == 39900
+
+    def test_inr_pricing_values(self):
+        assert get_plan_price("starter", "INR") == 199900
+        assert get_plan_price("pro", "INR") == 599900
+        assert get_plan_price("agency", "INR") == 1499900
+
+    def test_inr_is_not_usd_conversion(self):
+        for plan_type in PLAN_DEFINITIONS:
+            usd = get_plan_price(plan_type, "USD")
+            inr = get_plan_price(plan_type, "INR")
+            # INR should be significantly lower in dollar terms (PPP)
+            # At ~83 INR/USD, if it were a direct conversion, INR paise ~ USD cents * 83
+            # PPP pricing should be much lower than direct conversion
+            assert inr < usd * 83, f"{plan_type}: INR price looks like direct conversion"
+
+    def test_get_plan_price_case_insensitive(self):
+        assert get_plan_price("starter", "usd") == 4900
+        assert get_plan_price("starter", "inr") == 199900
+
+    def test_get_plan_price_invalid_currency(self):
+        with pytest.raises(ValueError):
+            get_plan_price("starter", "EUR")
+
+    def test_plan_info_includes_pricing(self):
+        info = get_plan_info("starter")
+        assert info["pricing"]["USD"] == 4900
+        assert info["pricing"]["INR"] == 199900
 
 
 # ═══════════════════════════════════════════════
@@ -329,6 +383,11 @@ class TestBillingAPI:
         # Verify razorpay fields are present
         assert "razorpay_customer_id" in data["billing"]
         assert "razorpay_subscription_id" in data["billing"]
+        # Verify currency and pricing fields
+        assert data["billing"]["currency"] == "USD"
+        assert "pricing" in data["plan"]
+        assert data["plan"]["pricing"]["USD"] == 4900
+        assert data["plan"]["pricing"]["INR"] == 199900
 
     def test_billing_overview_not_found(self):
         fake_id = uuid.uuid4()
@@ -355,7 +414,7 @@ class TestBillingAPI:
             assert resp.status_code == 400
 
     def test_checkout_creates_subscription(self, workspace):
-        """Test full checkout flow with mocked Razorpay."""
+        """Test full checkout flow with mocked Razorpay (default USD)."""
         mock_subscription = {
             "subscription_id": "sub_razorpay_456",
             "short_url": "https://rzp.io/i/test",
@@ -374,6 +433,77 @@ class TestBillingAPI:
             assert data["subscription_id"] == "sub_razorpay_456"
             assert data["razorpay_key_id"] == "rzp_test_xxx"
             assert data["plan_type"] == "pro"
+            assert data["currency"] == "USD"
+            assert data["plan_price"] == 14900
+
+    def test_checkout_with_inr_currency(self, workspace):
+        """Test checkout with INR currency returns INR pricing."""
+        mock_subscription = {
+            "subscription_id": "sub_inr_789",
+            "short_url": "https://rzp.io/i/inr",
+            "status": "created",
+        }
+        with patch("app.api.billing.get_settings") as mock_settings, \
+             patch("app.api.billing.create_razorpay_customer", return_value="cust_inr_123"), \
+             patch("app.api.billing.create_razorpay_subscription", return_value=mock_subscription) as mock_create:
+            mock_settings.return_value.RAZORPAY_KEY_ID = "rzp_test_xxx"
+            resp = client.post(
+                f"/api/workspaces/{workspace.id}/billing/checkout",
+                json={"plan_type": "pro", "currency": "INR"},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["subscription_id"] == "sub_inr_789"
+            assert data["currency"] == "INR"
+            assert data["plan_price"] == 599900
+            # Verify currency was passed to Razorpay
+            mock_create.assert_called_once()
+            call_kwargs = mock_create.call_args
+            assert call_kwargs[1]["currency"] == "INR" or call_kwargs[0][3] == "INR"
+
+    def test_checkout_invalid_currency(self, workspace):
+        """Test checkout with unsupported currency returns 400."""
+        with patch("app.api.billing.get_settings") as mock_settings:
+            mock_settings.return_value.RAZORPAY_KEY_ID = "rzp_test_xxx"
+            resp = client.post(
+                f"/api/workspaces/{workspace.id}/billing/checkout",
+                json={"plan_type": "pro", "currency": "EUR"},
+            )
+            assert resp.status_code == 400
+            assert "Unsupported currency" in resp.json()["detail"]
+
+    def test_checkout_stores_currency_on_billing(self, workspace, db):
+        """Test that checkout stores currency and plan_price on billing record."""
+        mock_subscription = {
+            "subscription_id": "sub_store_test",
+            "short_url": "",
+            "status": "created",
+        }
+        with patch("app.api.billing.get_settings") as mock_settings, \
+             patch("app.api.billing.create_razorpay_customer", return_value="cust_store"), \
+             patch("app.api.billing.create_razorpay_subscription", return_value=mock_subscription):
+            mock_settings.return_value.RAZORPAY_KEY_ID = "rzp_test_xxx"
+            resp = client.post(
+                f"/api/workspaces/{workspace.id}/billing/checkout",
+                json={"plan_type": "agency", "currency": "INR"},
+            )
+            assert resp.status_code == 200
+
+        # Verify billing record was updated
+        db.expire_all()
+        billing = get_workspace_billing(workspace.id, db)
+        assert billing.currency == "INR"
+        assert billing.plan_price == 1499900
+
+    def test_plans_endpoint_includes_pricing(self):
+        """Verify /api/billing/plans returns pricing with both currencies."""
+        resp = client.get("/api/billing/plans")
+        assert resp.status_code == 200
+        plans = resp.json()
+        for plan in plans:
+            assert "pricing" in plan
+            assert "USD" in plan["pricing"]
+            assert "INR" in plan["pricing"]
 
     def test_verify_payment_success(self, workspace, db):
         """Test payment verification with mocked signature check."""

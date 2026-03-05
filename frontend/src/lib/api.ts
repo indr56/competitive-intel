@@ -231,13 +231,14 @@ export const billing = {
   plans: () => request<PlanInfo[]>("/api/billing/plans"),
   overview: (workspaceId: string) =>
     request<BillingOverview>(`/api/workspaces/${workspaceId}/billing`),
-  checkout: (workspaceId: string, planType: string) =>
+  checkout: (workspaceId: string, planType: string, currency: string = "USD") =>
     request<CheckoutSessionResponse>(
       `/api/workspaces/${workspaceId}/billing/checkout`,
       {
         method: "POST",
         body: JSON.stringify({
           plan_type: planType,
+          currency,
         }),
       }
     ),

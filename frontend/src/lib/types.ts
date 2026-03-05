@@ -223,10 +223,16 @@ export interface PlanLimits {
   max_workspaces: number;
 }
 
+export interface PlanPricing {
+  USD: number;
+  INR: number;
+}
+
 export interface PlanInfo {
   plan_type: string;
   name: string;
   price_monthly_cents: number;
+  pricing: PlanPricing;
   limits: PlanLimits;
 }
 
@@ -235,6 +241,8 @@ export interface WorkspaceBilling {
   workspace_id: string;
   plan_type: string;
   subscription_status: string;
+  currency: string;
+  plan_price: number | null;
   razorpay_customer_id: string | null;
   razorpay_subscription_id: string | null;
   trial_ends_at: string | null;
@@ -262,6 +270,8 @@ export interface CheckoutSessionResponse {
   short_url: string | null;
   workspace_id: string;
   plan_type: string;
+  currency: string;
+  plan_price: number;
 }
 
 export interface PaymentVerifyRequest {

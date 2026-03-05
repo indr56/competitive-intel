@@ -45,6 +45,10 @@ PLAN_DEFINITIONS: dict[str, dict[str, Any]] = {
     "starter": {
         "name": "Starter",
         "price_monthly_cents": 4900,  # $49/mo
+        "pricing": {
+            "USD": 4900,   # $49/mo in cents
+            "INR": 199900, # ₹1999/mo in paise
+        },
         "limits": {
             "max_competitors": 3,
             "max_tracked_pages": 15,
@@ -56,6 +60,10 @@ PLAN_DEFINITIONS: dict[str, dict[str, Any]] = {
     "pro": {
         "name": "Pro",
         "price_monthly_cents": 14900,  # $149/mo
+        "pricing": {
+            "USD": 14900,   # $149/mo in cents
+            "INR": 599900,  # ₹5999/mo in paise
+        },
         "limits": {
             "max_competitors": 10,
             "max_tracked_pages": 50,
@@ -67,6 +75,10 @@ PLAN_DEFINITIONS: dict[str, dict[str, Any]] = {
     "agency": {
         "name": "Agency",
         "price_monthly_cents": 39900,  # $399/mo
+        "pricing": {
+            "USD": 39900,    # $399/mo in cents
+            "INR": 1499900,  # ₹14999/mo in paise
+        },
         "limits": {
             "max_competitors": 50,
             "max_tracked_pages": 200,
@@ -76,6 +88,8 @@ PLAN_DEFINITIONS: dict[str, dict[str, Any]] = {
         },
     },
 }
+
+SUPPORTED_CURRENCIES = {"USD", "INR"}
 
 TRIAL_DAYS = 14
 GRACE_PERIOD_DAYS = 7
@@ -111,8 +125,19 @@ def get_plan_info(plan_type: str) -> dict[str, Any]:
         "plan_type": plan_type,
         "name": plan["name"],
         "price_monthly_cents": plan["price_monthly_cents"],
+        "pricing": plan.get("pricing", {"USD": plan["price_monthly_cents"]}),
         "limits": plan["limits"],
     }
+
+
+def get_plan_price(plan_type: str, currency: str) -> int:
+    """Get plan price in smallest currency unit for the given currency."""
+    plan = PLAN_DEFINITIONS.get(plan_type, PLAN_DEFINITIONS["starter"])
+    pricing = plan.get("pricing", {})
+    price = pricing.get(currency.upper())
+    if price is None:
+        raise ValueError(f"No {currency} pricing for plan: {plan_type}")
+    return price
 
 
 def is_billing_active(status: str, grace_period_ends_at: datetime | None = None) -> bool:
@@ -171,6 +196,7 @@ def create_razorpay_subscription(
     razorpay_customer_id: str,
     plan_type: str,
     workspace_id: str,
+    currency: str = "USD",
 ) -> dict[str, Any]:
     """
     Create a Razorpay Subscription.
@@ -180,15 +206,18 @@ def create_razorpay_subscription(
     client = _get_razorpay_client()
     razorpay_plan_id = get_razorpay_plan_id(plan_type)
 
-    subscription = client.subscription.create({
+    subscription_data: dict[str, Any] = {
         "plan_id": razorpay_plan_id,
         "customer_id": razorpay_customer_id,
         "total_count": 120,  # max billing cycles (10 years monthly)
         "notes": {
             "workspace_id": workspace_id,
             "plan_type": plan_type,
+            "currency": currency,
         },
-    })
+    }
+
+    subscription = client.subscription.create(subscription_data)
 
     return {
         "subscription_id": subscription["id"],

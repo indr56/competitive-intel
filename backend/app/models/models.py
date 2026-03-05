@@ -304,6 +304,8 @@ class WorkspaceBilling(Base):
     subscription_status = Column(
         String(50), default=SubscriptionStatus.TRIALING.value, nullable=False,
     )
+    currency = Column(String(10), default="USD", nullable=False, server_default="USD")
+    plan_price = Column(Integer, nullable=True)
     razorpay_customer_id = Column(String(255), nullable=True, unique=True)
     razorpay_subscription_id = Column(String(255), nullable=True, unique=True)
     trial_ends_at = Column(DateTime(timezone=True), nullable=True)
