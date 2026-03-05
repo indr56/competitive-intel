@@ -174,9 +174,36 @@ class DigestRead(ORMBase):
     period_start: datetime
     period_end: datetime
     change_event_ids: list[uuid.UUID]
+    ranking_data: list[dict[str, Any]] | None = None
+    html_body: str | None = None
+    markdown_body: str | None = None
     email_sent_at: datetime | None
     web_view_token: str | None
     created_at: datetime
+
+
+# ── White-Label Config ──
+
+
+class WhiteLabelConfigRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    logo_url: str | None
+    brand_color: str
+    sender_name: str | None
+    sender_email: str | None
+    company_name: str | None
+    footer_text: str | None
+    created_at: datetime
+
+
+class WhiteLabelConfigUpsert(BaseModel):
+    logo_url: str | None = None
+    brand_color: str = "#111827"
+    sender_name: str | None = None
+    sender_email: str | None = None
+    company_name: str | None = None
+    footer_text: str | None = None
 
 
 # ── Misc ──

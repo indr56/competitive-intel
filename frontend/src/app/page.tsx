@@ -12,14 +12,11 @@ export default function Home() {
             Competitive Moves Intelligence
           </h1>
           <div className="flex gap-6 text-sm text-gray-600">
-            <a href="/competitors" className="hover:text-gray-900">
-              Competitors
+            <a href="/dashboard" className="hover:text-gray-900">
+              Dashboard
             </a>
-            <a href="/changes" className="hover:text-gray-900">
-              Changes
-            </a>
-            <a href="/digests" className="hover:text-gray-900">
-              Digests
+            <a href="/login" className="hover:text-gray-900">
+              Login
             </a>
           </div>
         </div>
