@@ -1,7 +1,10 @@
 """
-Tests for billing: plan enforcement, billing API, webhook idempotency, and regression.
+Tests for billing: plan enforcement, Razorpay billing API, webhook idempotency, and regression.
 """
 
+import hashlib
+import hmac
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
@@ -23,9 +26,11 @@ from app.models.models import (
 )
 from app.core.billing import (
     PLAN_DEFINITIONS,
+    RAZORPAY_STATUS_MAP,
     get_plan_limits,
     get_plan_info,
     is_billing_active,
+    map_razorpay_status,
     ACTIVE_STATUSES,
 )
 from app.core.plan_enforcement import (
@@ -169,6 +174,37 @@ class TestBillingStatus:
 
 
 # ═══════════════════════════════════════════════
+# 2b. Razorpay status mapping tests
+# ═══════════════════════════════════════════════
+
+
+class TestRazorpayStatusMapping:
+    def test_active_maps_to_active(self):
+        assert map_razorpay_status("active") == "active"
+
+    def test_created_maps_to_incomplete(self):
+        assert map_razorpay_status("created") == "incomplete"
+
+    def test_authenticated_maps_to_trialing(self):
+        assert map_razorpay_status("authenticated") == "trialing"
+
+    def test_paused_maps_to_past_due(self):
+        assert map_razorpay_status("paused") == "past_due"
+
+    def test_cancelled_maps_to_canceled(self):
+        assert map_razorpay_status("cancelled") == "canceled"
+
+    def test_completed_maps_to_canceled(self):
+        assert map_razorpay_status("completed") == "canceled"
+
+    def test_halted_maps_to_past_due(self):
+        assert map_razorpay_status("halted") == "past_due"
+
+    def test_unknown_maps_to_incomplete(self):
+        assert map_razorpay_status("unknown_state") == "incomplete"
+
+
+# ═══════════════════════════════════════════════
 # 3. Plan enforcement tests
 # ═══════════════════════════════════════════════
 
@@ -196,10 +232,8 @@ class TestPlanEnforcement:
         assert exc_info.value.status_code == 402
 
     def test_competitor_limit_enforced(self, db, workspace):
-        # Starter plan allows 3 competitors
         get_workspace_billing(workspace.id, db)
 
-        # Add 3 competitors (at limit)
         for i in range(3):
             comp = Competitor(
                 workspace_id=workspace.id,
@@ -217,7 +251,6 @@ class TestPlanEnforcement:
 
     def test_competitor_limit_passes_under_limit(self, db, workspace):
         get_workspace_billing(workspace.id, db)
-        # Add 2 competitors (under limit of 3)
         for i in range(2):
             comp = Competitor(
                 workspace_id=workspace.id,
@@ -227,7 +260,6 @@ class TestPlanEnforcement:
             db.add(comp)
         db.commit()
 
-        # Should not raise
         enforce_competitor_limit(workspace.id, db)
 
     def test_tracked_page_limit_enforced(self, db, workspace):
@@ -241,7 +273,6 @@ class TestPlanEnforcement:
         db.add(comp)
         db.flush()
 
-        # Starter allows 15 pages, add 15
         for i in range(15):
             page = TrackedPage(
                 competitor_id=comp.id,
@@ -269,7 +300,7 @@ class TestPlanEnforcement:
 
 
 # ═══════════════════════════════════════════════
-# 4. Billing API tests
+# 4. Billing API tests (Razorpay)
 # ═══════════════════════════════════════════════
 
 
@@ -295,66 +326,272 @@ class TestBillingAPI:
         assert data["usage"]["competitors_limit"] == 3
         assert data["usage"]["tracked_pages"] == 0
         assert data["usage"]["tracked_pages_limit"] == 15
+        # Verify razorpay fields are present
+        assert "razorpay_customer_id" in data["billing"]
+        assert "razorpay_subscription_id" in data["billing"]
 
     def test_billing_overview_not_found(self):
         fake_id = uuid.uuid4()
         resp = client.get(f"/api/workspaces/{fake_id}/billing")
         assert resp.status_code == 404
 
-    def test_checkout_no_stripe_key(self, workspace):
-        resp = client.post(
-            f"/api/workspaces/{workspace.id}/billing/checkout",
-            json={"plan_type": "pro"},
-        )
-        # Should return 503 if Stripe is not configured
-        assert resp.status_code == 503
+    def test_checkout_no_razorpay_key(self, workspace):
+        with patch("app.api.billing.get_settings") as mock_settings:
+            mock_settings.return_value.RAZORPAY_KEY_ID = ""
+            resp = client.post(
+                f"/api/workspaces/{workspace.id}/billing/checkout",
+                json={"plan_type": "pro"},
+            )
+            # Should return 503 if Razorpay is not configured
+            assert resp.status_code == 503
 
     def test_checkout_invalid_plan(self, workspace):
         with patch("app.api.billing.get_settings") as mock_settings:
-            mock_settings.return_value.STRIPE_SECRET_KEY = "sk_test_xxx"
-            mock_settings.return_value.FRONTEND_URL = "http://localhost:3000"
+            mock_settings.return_value.RAZORPAY_KEY_ID = "rzp_test_xxx"
             resp = client.post(
                 f"/api/workspaces/{workspace.id}/billing/checkout",
                 json={"plan_type": "nonexistent"},
             )
             assert resp.status_code == 400
 
-    def test_portal_no_customer(self, workspace):
-        with patch("app.api.billing.get_settings") as mock_settings:
-            mock_settings.return_value.STRIPE_SECRET_KEY = "sk_test_xxx"
-            mock_settings.return_value.STRIPE_WEBHOOK_SECRET = ""
+    def test_checkout_creates_subscription(self, workspace):
+        """Test full checkout flow with mocked Razorpay."""
+        mock_subscription = {
+            "subscription_id": "sub_razorpay_456",
+            "short_url": "https://rzp.io/i/test",
+            "status": "created",
+        }
+        with patch("app.api.billing.get_settings") as mock_settings, \
+             patch("app.api.billing.create_razorpay_customer", return_value="cust_razorpay_123"), \
+             patch("app.api.billing.create_razorpay_subscription", return_value=mock_subscription):
+            mock_settings.return_value.RAZORPAY_KEY_ID = "rzp_test_xxx"
             resp = client.post(
-                f"/api/workspaces/{workspace.id}/billing/portal"
+                f"/api/workspaces/{workspace.id}/billing/checkout",
+                json={"plan_type": "pro"},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["subscription_id"] == "sub_razorpay_456"
+            assert data["razorpay_key_id"] == "rzp_test_xxx"
+            assert data["plan_type"] == "pro"
+
+    def test_verify_payment_success(self, workspace, db):
+        """Test payment verification with mocked signature check."""
+        billing = get_workspace_billing(workspace.id, db)
+        billing.razorpay_subscription_id = "sub_test_123"
+        db.commit()
+
+        with patch("app.api.billing.verify_payment_signature", return_value=True):
+            resp = client.post(
+                f"/api/workspaces/{workspace.id}/billing/verify",
+                json={
+                    "razorpay_subscription_id": "sub_test_123",
+                    "razorpay_payment_id": "pay_test_456",
+                    "razorpay_signature": "valid_sig",
+                },
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["verified"] is True
+            assert data["subscription_status"] == "active"
+
+    def test_verify_payment_invalid_signature(self, workspace, db):
+        """Test payment verification fails with invalid signature."""
+        billing = get_workspace_billing(workspace.id, db)
+        billing.razorpay_subscription_id = "sub_test_123"
+        db.commit()
+
+        with patch("app.api.billing.verify_payment_signature", return_value=False):
+            resp = client.post(
+                f"/api/workspaces/{workspace.id}/billing/verify",
+                json={
+                    "razorpay_subscription_id": "sub_test_123",
+                    "razorpay_payment_id": "pay_test_456",
+                    "razorpay_signature": "bad_sig",
+                },
             )
             assert resp.status_code == 400
 
+    def test_cancel_subscription(self, workspace, db):
+        """Test subscription cancellation."""
+        billing = get_workspace_billing(workspace.id, db)
+        billing.razorpay_subscription_id = "sub_test_789"
+        billing.subscription_status = "active"
+        db.commit()
+
+        with patch("app.api.billing.cancel_razorpay_subscription") as mock_cancel:
+            resp = client.post(
+                f"/api/workspaces/{workspace.id}/billing/cancel",
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "cancel_scheduled"
+            assert data["cancel_at_period_end"] is True
+            mock_cancel.assert_called_once_with("sub_test_789", cancel_at_cycle_end=True)
+
+    def test_cancel_no_subscription(self, workspace):
+        """Test cancel fails when no subscription exists."""
+        resp = client.post(
+            f"/api/workspaces/{workspace.id}/billing/cancel",
+        )
+        assert resp.status_code == 400
+
+    def test_sync_subscription(self, workspace, db):
+        """Test subscription sync from Razorpay."""
+        billing = get_workspace_billing(workspace.id, db)
+        billing.razorpay_subscription_id = "sub_sync_test"
+        db.commit()
+
+        mock_sub = {
+            "id": "sub_sync_test",
+            "status": "active",
+            "current_end": int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp()),
+        }
+        with patch("app.api.billing.fetch_razorpay_subscription", return_value=mock_sub):
+            resp = client.post(
+                f"/api/workspaces/{workspace.id}/billing/sync",
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["status"] == "active"
+            assert data["razorpay_status"] == "active"
+
 
 # ═══════════════════════════════════════════════
-# 5. Webhook idempotency tests
+# 5. Webhook idempotency tests (Razorpay)
 # ═══════════════════════════════════════════════
 
 
 class TestWebhookIdempotency:
     def test_duplicate_event_not_reprocessed(self, db, workspace):
-        event_id = "evt_test_123"
-        # Insert a processed webhook event
+        event_id = "subscription.activated_sub_test_123"
         wh = WebhookEvent(
-            stripe_event_id=event_id,
-            event_type="checkout.session.completed",
-            payload={"id": event_id, "type": "checkout.session.completed"},
+            razorpay_event_id=event_id,
+            event_type="subscription.activated",
+            payload={"event": "subscription.activated"},
             processed=True,
         )
         db.add(wh)
         db.commit()
 
-        # Verify it exists
         existing = (
             db.query(WebhookEvent)
-            .filter(WebhookEvent.stripe_event_id == event_id)
+            .filter(WebhookEvent.razorpay_event_id == event_id)
             .first()
         )
         assert existing is not None
         assert existing.processed is True
+
+
+# ═══════════════════════════════════════════════
+# 5b. Webhook processing tests (Razorpay)
+# ═══════════════════════════════════════════════
+
+
+class TestWebhookProcessing:
+    def _make_webhook_payload(self, event_type: str, entity: dict, entity_key: str = "subscription") -> dict:
+        return {
+            "event": event_type,
+            "payload": {
+                entity_key: {
+                    "entity": entity,
+                },
+            },
+        }
+
+    def _post_webhook(self, payload: dict, secret: str = "") -> object:
+        body = json.dumps(payload).encode()
+        if secret:
+            sig = hmac.new(
+                key=secret.encode(),
+                msg=body,
+                digestmod=hashlib.sha256,
+            ).hexdigest()
+        else:
+            sig = ""
+        return client.post(
+            "/api/webhooks/razorpay",
+            content=body,
+            headers={
+                "content-type": "application/json",
+                "x-razorpay-signature": sig,
+            },
+        )
+
+    def test_subscription_activated_updates_billing(self, workspace, db):
+        billing = get_workspace_billing(workspace.id, db)
+        billing.razorpay_subscription_id = "sub_wh_test"
+        billing.subscription_status = "incomplete"
+        db.commit()
+
+        payload = self._make_webhook_payload(
+            "subscription.activated",
+            {"id": "sub_wh_test", "status": "active", "notes": {"workspace_id": str(workspace.id), "plan_type": "pro"}},
+        )
+
+        with patch("app.api.billing.verify_webhook_signature"):
+            resp = self._post_webhook(payload)
+            assert resp.status_code == 200
+
+        db.refresh(billing)
+        assert billing.subscription_status == "active"
+        assert billing.plan_type == "pro"
+
+    def test_subscription_cancelled_updates_billing(self, workspace, db):
+        billing = get_workspace_billing(workspace.id, db)
+        billing.razorpay_subscription_id = "sub_cancel_test"
+        billing.subscription_status = "active"
+        db.commit()
+
+        payload = self._make_webhook_payload(
+            "subscription.cancelled",
+            {"id": "sub_cancel_test", "status": "cancelled"},
+        )
+
+        with patch("app.api.billing.verify_webhook_signature"):
+            resp = self._post_webhook(payload)
+            assert resp.status_code == 200
+
+        db.refresh(billing)
+        assert billing.subscription_status == "canceled"
+
+    def test_subscription_paused_sets_grace_period(self, workspace, db):
+        billing = get_workspace_billing(workspace.id, db)
+        billing.razorpay_subscription_id = "sub_pause_test"
+        billing.subscription_status = "active"
+        db.commit()
+
+        payload = self._make_webhook_payload(
+            "subscription.paused",
+            {"id": "sub_pause_test", "status": "paused"},
+        )
+
+        with patch("app.api.billing.verify_webhook_signature"):
+            resp = self._post_webhook(payload)
+            assert resp.status_code == 200
+
+        db.refresh(billing)
+        assert billing.subscription_status == "past_due"
+        assert billing.grace_period_ends_at is not None
+
+    def test_payment_captured_activates_billing(self, workspace, db):
+        billing = get_workspace_billing(workspace.id, db)
+        billing.razorpay_customer_id = "cust_pay_test"
+        billing.subscription_status = "incomplete"
+        db.commit()
+
+        payload = self._make_webhook_payload(
+            "payment.captured",
+            {"id": "pay_123", "customer_id": "cust_pay_test", "notes": {}},
+            entity_key="payment",
+        )
+
+        with patch("app.api.billing.verify_webhook_signature"):
+            resp = self._post_webhook(payload)
+            assert resp.status_code == 200
+
+        db.refresh(billing)
+        assert billing.subscription_status == "active"
 
 
 # ═══════════════════════════════════════════════
@@ -371,7 +608,6 @@ class TestCompetitorEnforcementAPI:
         assert resp.status_code == 201
 
     def test_create_competitor_at_limit(self, workspace, db):
-        # Fill up to starter limit (3)
         for i in range(3):
             comp = Competitor(
                 workspace_id=workspace.id,
@@ -459,7 +695,6 @@ class TestRegression:
         assert resp.status_code == 200
 
     def test_workspace_crud(self):
-        # Create
         resp = client.post(
             "/api/workspaces",
             json={"name": "Regression WS", "slug": "regression-ws"},
@@ -467,13 +702,11 @@ class TestRegression:
         assert resp.status_code == 201
         ws_id = resp.json()["id"]
 
-        # List
         resp = client.get("/api/workspaces")
         assert resp.status_code == 200
         assert any(w["id"] == ws_id for w in resp.json())
 
     def test_competitor_crud_for_active_workspace(self, workspace):
-        # Create competitor (should work — workspace has trialing billing)
         resp = client.post(
             f"/api/workspaces/{workspace.id}/competitors",
             json={"name": "Regression Comp", "domain": "regression.com"},
@@ -481,12 +714,10 @@ class TestRegression:
         assert resp.status_code == 201
         comp_id = resp.json()["id"]
 
-        # List
         resp = client.get(f"/api/workspaces/{workspace.id}/competitors")
         assert resp.status_code == 200
         assert len(resp.json()) >= 1
 
-        # Get
         resp = client.get(f"/api/competitors/{comp_id}")
         assert resp.status_code == 200
         assert resp.json()["name"] == "Regression Comp"
@@ -501,15 +732,12 @@ class TestRegression:
         db.commit()
         db.refresh(comp)
 
-        # Create page
         resp = client.post(
             f"/api/competitors/{comp.id}/pages",
             json={"url": "https://rc.com/pricing", "page_type": "pricing"},
         )
         assert resp.status_code == 201
-        page_id = resp.json()["id"]
 
-        # List
         resp = client.get(f"/api/competitors/{comp.id}/pages")
         assert resp.status_code == 200
         assert len(resp.json()) >= 1

@@ -276,8 +276,8 @@ class WorkspaceBillingRead(ORMBase):
     workspace_id: uuid.UUID
     plan_type: str
     subscription_status: str
-    stripe_customer_id: str | None
-    stripe_subscription_id: str | None
+    razorpay_customer_id: str | None
+    razorpay_subscription_id: str | None
     trial_ends_at: datetime | None
     current_period_end: datetime | None
     cancel_at_period_end: bool
@@ -299,9 +299,19 @@ class CheckoutSessionRequest(BaseModel):
 
 
 class CheckoutSessionResponse(BaseModel):
-    checkout_url: str
-    session_id: str
+    subscription_id: str
+    razorpay_key_id: str
+    short_url: str | None = None
+    workspace_id: str
+    plan_type: str
 
 
-class PortalSessionResponse(BaseModel):
-    portal_url: str
+class PaymentVerifyRequest(BaseModel):
+    razorpay_subscription_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+
+class PaymentVerifyResponse(BaseModel):
+    verified: bool
+    subscription_status: str

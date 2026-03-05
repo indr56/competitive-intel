@@ -235,8 +235,8 @@ export interface WorkspaceBilling {
   workspace_id: string;
   plan_type: string;
   subscription_status: string;
-  stripe_customer_id: string | null;
-  stripe_subscription_id: string | null;
+  razorpay_customer_id: string | null;
+  razorpay_subscription_id: string | null;
   trial_ends_at: string | null;
   current_period_end: string | null;
   cancel_at_period_end: boolean;
@@ -257,10 +257,20 @@ export interface BillingOverview {
 }
 
 export interface CheckoutSessionResponse {
-  checkout_url: string;
-  session_id: string;
+  subscription_id: string;
+  razorpay_key_id: string;
+  short_url: string | null;
+  workspace_id: string;
+  plan_type: string;
 }
 
-export interface PortalSessionResponse {
-  portal_url: string;
+export interface PaymentVerifyRequest {
+  razorpay_subscription_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}
+
+export interface PaymentVerifyResponse {
+  verified: boolean;
+  subscription_status: string;
 }

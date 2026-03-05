@@ -1,14 +1,16 @@
 """
 Billing API endpoints:
-- GET  /api/workspaces/{id}/billing          — billing overview
-- POST /api/workspaces/{id}/billing/checkout  — create Stripe checkout session
-- POST /api/workspaces/{id}/billing/portal    — create Stripe customer portal session
-- GET  /api/billing/plans                     — list available plans
-- POST /api/webhooks/stripe                   — Stripe webhook handler
+- GET  /api/workspaces/{id}/billing              — billing overview
+- POST /api/workspaces/{id}/billing/checkout      — create Razorpay subscription for checkout
+- POST /api/workspaces/{id}/billing/verify        — verify Razorpay payment signature
+- POST /api/workspaces/{id}/billing/cancel        — cancel subscription
+- GET  /api/billing/plans                          — list available plans
+- POST /api/webhooks/razorpay                      — Razorpay webhook handler
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -20,11 +22,14 @@ from app.core.database import get_db
 from app.core.billing import (
     GRACE_PERIOD_DAYS,
     PLAN_DEFINITIONS,
-    create_checkout_session,
-    create_portal_session,
-    create_stripe_customer,
+    create_razorpay_customer,
+    create_razorpay_subscription,
+    cancel_razorpay_subscription,
+    fetch_razorpay_subscription,
     get_plan_info,
     get_plan_limits,
+    map_razorpay_status,
+    verify_payment_signature,
     verify_webhook_signature,
 )
 from app.core.config import get_settings
@@ -40,8 +45,9 @@ from app.schemas.schemas import (
     BillingOverview,
     CheckoutSessionRequest,
     CheckoutSessionResponse,
+    PaymentVerifyRequest,
+    PaymentVerifyResponse,
     PlanInfo,
-    PortalSessionResponse,
     WorkspaceBillingRead,
 )
 
@@ -102,7 +108,7 @@ def get_billing_overview(workspace_id: uuid.UUID, db: Session = Depends(get_db))
     )
 
 
-# ── Checkout ──
+# ── Razorpay Checkout ──
 
 
 @router.post(
@@ -115,8 +121,8 @@ def create_checkout(
     db: Session = Depends(get_db),
 ):
     settings = get_settings()
-    if not settings.STRIPE_SECRET_KEY:
-        raise HTTPException(status_code=503, detail="Stripe is not configured")
+    if not settings.RAZORPAY_KEY_ID:
+        raise HTTPException(status_code=503, detail="Razorpay is not configured")
 
     ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
     if not ws:
@@ -127,72 +133,144 @@ def create_checkout(
 
     billing = get_workspace_billing(workspace_id, db)
 
-    # Create Stripe customer if not exists
-    if not billing.stripe_customer_id:
-        cust_id = create_stripe_customer(str(workspace_id), ws.name)
-        billing.stripe_customer_id = cust_id
+    # Create Razorpay customer if not exists
+    if not billing.razorpay_customer_id:
+        cust_id = create_razorpay_customer(str(workspace_id), ws.name)
+        billing.razorpay_customer_id = cust_id
         db.commit()
         db.refresh(billing)
 
-    success_url = payload.success_url or f"{settings.FRONTEND_URL}/dashboard/billing?success=true"
-    cancel_url = payload.cancel_url or f"{settings.FRONTEND_URL}/dashboard/billing?canceled=true"
-
-    result = create_checkout_session(
-        stripe_customer_id=billing.stripe_customer_id,
+    # Create Razorpay subscription
+    result = create_razorpay_subscription(
+        razorpay_customer_id=billing.razorpay_customer_id,
         plan_type=payload.plan_type,
         workspace_id=str(workspace_id),
-        success_url=success_url,
-        cancel_url=cancel_url,
     )
-    return CheckoutSessionResponse(**result)
+
+    # Store subscription ID immediately
+    billing.razorpay_subscription_id = result["subscription_id"]
+    billing.plan_type = payload.plan_type
+    db.commit()
+
+    return CheckoutSessionResponse(
+        subscription_id=result["subscription_id"],
+        razorpay_key_id=settings.RAZORPAY_KEY_ID,
+        short_url=result.get("short_url"),
+        workspace_id=str(workspace_id),
+        plan_type=payload.plan_type,
+    )
 
 
-# ── Customer Portal ──
+# ── Payment Verification (called after frontend checkout completes) ──
 
 
 @router.post(
-    "/api/workspaces/{workspace_id}/billing/portal",
-    response_model=PortalSessionResponse,
+    "/api/workspaces/{workspace_id}/billing/verify",
+    response_model=PaymentVerifyResponse,
 )
-def create_portal(workspace_id: uuid.UUID, db: Session = Depends(get_db)):
-    settings = get_settings()
-    if not settings.STRIPE_SECRET_KEY:
-        raise HTTPException(status_code=503, detail="Stripe is not configured")
-
+def verify_payment(
+    workspace_id: uuid.UUID,
+    payload: PaymentVerifyRequest,
+    db: Session = Depends(get_db),
+):
     billing = get_workspace_billing(workspace_id, db)
-    if not billing.stripe_customer_id:
-        raise HTTPException(status_code=400, detail="No Stripe customer. Subscribe to a plan first.")
 
-    return_url = f"{settings.FRONTEND_URL}/dashboard/billing"
-    url = create_portal_session(billing.stripe_customer_id, return_url)
-    return PortalSessionResponse(portal_url=url)
+    # Verify the payment signature
+    verified = verify_payment_signature({
+        "razorpay_subscription_id": payload.razorpay_subscription_id,
+        "razorpay_payment_id": payload.razorpay_payment_id,
+        "razorpay_signature": payload.razorpay_signature,
+    })
+
+    if not verified:
+        raise HTTPException(status_code=400, detail="Payment signature verification failed")
+
+    # Update billing status
+    billing.razorpay_subscription_id = payload.razorpay_subscription_id
+    billing.subscription_status = "active"
+    billing.grace_period_ends_at = None
+    db.commit()
+    db.refresh(billing)
+
+    return PaymentVerifyResponse(
+        verified=True,
+        subscription_status=billing.subscription_status,
+    )
 
 
-# ── Stripe Webhook ──
+# ── Cancel Subscription ──
 
 
-@router.post("/api/webhooks/stripe", status_code=200)
-async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
-    settings = get_settings()
-    if not settings.STRIPE_WEBHOOK_SECRET:
-        raise HTTPException(status_code=503, detail="Webhook secret not configured")
-
-    payload = await request.body()
-    sig_header = request.headers.get("stripe-signature", "")
+@router.post("/api/workspaces/{workspace_id}/billing/cancel", status_code=200)
+def cancel_subscription(workspace_id: uuid.UUID, db: Session = Depends(get_db)):
+    billing = get_workspace_billing(workspace_id, db)
+    if not billing.razorpay_subscription_id:
+        raise HTTPException(status_code=400, detail="No active subscription to cancel")
 
     try:
-        event = verify_webhook_signature(payload, sig_header)
+        cancel_razorpay_subscription(billing.razorpay_subscription_id, cancel_at_cycle_end=True)
     except Exception as e:
-        logger.warning("Webhook signature verification failed: %s", e)
+        logger.error("Razorpay cancel failed: %s", e)
+        raise HTTPException(status_code=502, detail="Failed to cancel subscription with Razorpay")
+
+    billing.cancel_at_period_end = True
+    db.commit()
+
+    return {"status": "cancel_scheduled", "cancel_at_period_end": True}
+
+
+# ── Sync Subscription (manual refresh from Razorpay) ──
+
+
+@router.post("/api/workspaces/{workspace_id}/billing/sync", status_code=200)
+def sync_subscription(workspace_id: uuid.UUID, db: Session = Depends(get_db)):
+    billing = get_workspace_billing(workspace_id, db)
+    if not billing.razorpay_subscription_id:
+        return {"status": "no_subscription"}
+
+    try:
+        sub = fetch_razorpay_subscription(billing.razorpay_subscription_id)
+    except Exception as e:
+        logger.error("Razorpay fetch failed: %s", e)
+        raise HTTPException(status_code=502, detail="Failed to fetch subscription from Razorpay")
+
+    billing.subscription_status = map_razorpay_status(sub.get("status", ""))
+    if sub.get("current_end"):
+        billing.current_period_end = datetime.fromtimestamp(sub["current_end"], tz=timezone.utc)
+    if billing.subscription_status == "active":
+        billing.grace_period_ends_at = None
+    db.commit()
+    db.refresh(billing)
+
+    return {
+        "status": billing.subscription_status,
+        "razorpay_status": sub.get("status"),
+        "current_period_end": billing.current_period_end.isoformat() if billing.current_period_end else None,
+    }
+
+
+# ── Razorpay Webhook ──
+
+
+@router.post("/api/webhooks/razorpay", status_code=200)
+async def razorpay_webhook(request: Request, db: Session = Depends(get_db)):
+    payload = await request.body()
+    signature = request.headers.get("x-razorpay-signature", "")
+
+    try:
+        verify_webhook_signature(payload, signature)
+    except ValueError as e:
+        logger.warning("Razorpay webhook signature verification failed: %s", e)
         raise HTTPException(status_code=400, detail="Invalid signature")
 
-    event_id = event["id"]
-    event_type = event["type"]
+    event = json.loads(payload)
+    event_id = event.get("event", "") + "_" + event.get("payload", {}).get("payment", {}).get("entity", {}).get("id", event.get("payload", {}).get("subscription", {}).get("entity", {}).get("id", str(uuid.uuid4())))
+    event_type = event.get("event", "")
 
     # Idempotency check
     existing = (
         db.query(WebhookEvent)
-        .filter(WebhookEvent.stripe_event_id == event_id)
+        .filter(WebhookEvent.razorpay_event_id == event_id)
         .first()
     )
     if existing and existing.processed:
@@ -201,7 +279,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     # Record the event
     if not existing:
         wh_event = WebhookEvent(
-            stripe_event_id=event_id,
+            razorpay_event_id=event_id,
             event_type=event_type,
             payload=event,
         )
@@ -211,11 +289,11 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         wh_event = existing
 
     try:
-        _process_webhook_event(event_type, event["data"]["object"], db)
+        _process_razorpay_event(event_type, event.get("payload", {}), db)
         wh_event.processed = True
         db.commit()
     except Exception as e:
-        logger.error("Webhook processing error for %s: %s", event_id, e)
+        logger.error("Razorpay webhook processing error for %s: %s", event_id, e)
         wh_event.error_message = str(e)
         db.commit()
         raise HTTPException(status_code=500, detail="Webhook processing failed")
@@ -223,82 +301,143 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     return {"status": "processed"}
 
 
-def _process_webhook_event(event_type: str, obj: dict, db: Session) -> None:
-    """Route webhook events to handlers."""
+def _process_razorpay_event(event_type: str, payload: dict, db: Session) -> None:
+    """Route Razorpay webhook events to handlers."""
     handlers = {
-        "checkout.session.completed": _handle_checkout_completed,
-        "invoice.payment_succeeded": _handle_payment_succeeded,
-        "invoice.payment_failed": _handle_payment_failed,
-        "customer.subscription.updated": _handle_subscription_updated,
-        "customer.subscription.deleted": _handle_subscription_deleted,
+        "payment.captured": _handle_payment_captured,
+        "subscription.activated": _handle_subscription_activated,
+        "subscription.charged": _handle_subscription_charged,
+        "subscription.cancelled": _handle_subscription_cancelled,
+        "subscription.paused": _handle_subscription_paused,
+        "subscription.halted": _handle_subscription_halted,
     }
     handler = handlers.get(event_type)
     if handler:
-        handler(obj, db)
+        handler(payload, db)
     else:
-        logger.info("Unhandled webhook event type: %s", event_type)
-
-
-def _find_billing_by_customer(customer_id: str, db: Session) -> WorkspaceBilling | None:
-    return (
-        db.query(WorkspaceBilling)
-        .filter(WorkspaceBilling.stripe_customer_id == customer_id)
-        .first()
-    )
+        logger.info("Unhandled Razorpay webhook event: %s", event_type)
 
 
 def _find_billing_by_subscription(sub_id: str, db: Session) -> WorkspaceBilling | None:
     return (
         db.query(WorkspaceBilling)
-        .filter(WorkspaceBilling.stripe_subscription_id == sub_id)
+        .filter(WorkspaceBilling.razorpay_subscription_id == sub_id)
         .first()
     )
 
 
-def _handle_checkout_completed(obj: dict, db: Session) -> None:
-    """Handle checkout.session.completed — link subscription to workspace."""
-    customer_id = obj.get("customer")
-    subscription_id = obj.get("subscription")
-    metadata = obj.get("metadata", {})
-    workspace_id = metadata.get("workspace_id")
-    plan_type = metadata.get("plan_type", "starter")
+def _find_billing_by_customer(customer_id: str, db: Session) -> WorkspaceBilling | None:
+    return (
+        db.query(WorkspaceBilling)
+        .filter(WorkspaceBilling.razorpay_customer_id == customer_id)
+        .first()
+    )
 
-    if not customer_id:
-        return
 
-    billing = _find_billing_by_customer(customer_id, db)
+def _extract_subscription_entity(payload: dict) -> dict:
+    """Extract subscription entity from Razorpay webhook payload."""
+    return payload.get("subscription", {}).get("entity", {})
+
+
+def _extract_payment_entity(payload: dict) -> dict:
+    """Extract payment entity from Razorpay webhook payload."""
+    return payload.get("payment", {}).get("entity", {})
+
+
+def _handle_payment_captured(payload: dict, db: Session) -> None:
+    """Handle payment.captured — mark subscription active, clear grace period."""
+    payment = _extract_payment_entity(payload)
+    notes = payment.get("notes", {})
+    workspace_id = notes.get("workspace_id")
+
+    # Try to find by subscription ID in payment's invoice
+    # Payment might not have subscription info directly — use notes or customer
+    customer_id = payment.get("customer_id")
+
+    billing = None
+    if customer_id:
+        billing = _find_billing_by_customer(customer_id, db)
     if not billing and workspace_id:
         billing = get_workspace_billing(uuid.UUID(workspace_id), db)
-        billing.stripe_customer_id = customer_id
 
     if billing:
-        billing.stripe_subscription_id = subscription_id
-        billing.plan_type = plan_type
         billing.subscription_status = "active"
+        billing.grace_period_ends_at = None
         db.flush()
 
 
-def _handle_payment_succeeded(obj: dict, db: Session) -> None:
-    """Handle invoice.payment_succeeded — mark subscription active."""
-    sub_id = obj.get("subscription")
+def _handle_subscription_activated(payload: dict, db: Session) -> None:
+    """Handle subscription.activated — subscription is now active."""
+    sub = _extract_subscription_entity(payload)
+    sub_id = sub.get("id")
     if not sub_id:
         return
+
+    billing = _find_billing_by_subscription(sub_id, db)
+    if not billing:
+        # Try from notes
+        notes = sub.get("notes", {})
+        workspace_id = notes.get("workspace_id")
+        if workspace_id:
+            billing = get_workspace_billing(uuid.UUID(workspace_id), db)
+            billing.razorpay_subscription_id = sub_id
+
+    if billing:
+        billing.subscription_status = "active"
+        billing.grace_period_ends_at = None
+
+        # Update plan from notes
+        plan_type = sub.get("notes", {}).get("plan_type")
+        if plan_type and plan_type in PLAN_DEFINITIONS:
+            billing.plan_type = plan_type
+
+        # Update period end
+        current_end = sub.get("current_end")
+        if current_end:
+            billing.current_period_end = datetime.fromtimestamp(current_end, tz=timezone.utc)
+
+        db.flush()
+
+
+def _handle_subscription_charged(payload: dict, db: Session) -> None:
+    """Handle subscription.charged — recurring payment succeeded."""
+    sub = _extract_subscription_entity(payload)
+    sub_id = sub.get("id")
+    if not sub_id:
+        return
+
     billing = _find_billing_by_subscription(sub_id, db)
     if billing:
         billing.subscription_status = "active"
         billing.grace_period_ends_at = None
-        # Update period end
-        period_end = obj.get("lines", {}).get("data", [{}])[0].get("period", {}).get("end")
-        if period_end:
-            billing.current_period_end = datetime.fromtimestamp(period_end, tz=timezone.utc)
+
+        current_end = sub.get("current_end")
+        if current_end:
+            billing.current_period_end = datetime.fromtimestamp(current_end, tz=timezone.utc)
+
         db.flush()
 
 
-def _handle_payment_failed(obj: dict, db: Session) -> None:
-    """Handle invoice.payment_failed — set past_due + grace period."""
-    sub_id = obj.get("subscription")
+def _handle_subscription_cancelled(payload: dict, db: Session) -> None:
+    """Handle subscription.cancelled — mark as canceled."""
+    sub = _extract_subscription_entity(payload)
+    sub_id = sub.get("id")
     if not sub_id:
         return
+
+    billing = _find_billing_by_subscription(sub_id, db)
+    if billing:
+        billing.subscription_status = "canceled"
+        db.flush()
+
+
+def _handle_subscription_paused(payload: dict, db: Session) -> None:
+    """Handle subscription.paused — mark as past_due with grace period."""
+    sub = _extract_subscription_entity(payload)
+    sub_id = sub.get("id")
+    if not sub_id:
+        return
+
     billing = _find_billing_by_subscription(sub_id, db)
     if billing:
         billing.subscription_status = "past_due"
@@ -307,55 +446,16 @@ def _handle_payment_failed(obj: dict, db: Session) -> None:
         db.flush()
 
 
-def _handle_subscription_updated(obj: dict, db: Session) -> None:
-    """Handle customer.subscription.updated — sync status, plan, period."""
-    sub_id = obj.get("id")
+def _handle_subscription_halted(payload: dict, db: Session) -> None:
+    """Handle subscription.halted — payment retries exhausted, set past_due."""
+    sub = _extract_subscription_entity(payload)
+    sub_id = sub.get("id")
     if not sub_id:
         return
-    billing = _find_billing_by_subscription(sub_id, db)
-    if not billing:
-        # Try by customer
-        customer_id = obj.get("customer")
-        if customer_id:
-            billing = _find_billing_by_customer(customer_id, db)
-    if not billing:
-        return
 
-    billing.stripe_subscription_id = sub_id
-    billing.subscription_status = obj.get("status", billing.subscription_status)
-    billing.cancel_at_period_end = obj.get("cancel_at_period_end", False)
-
-    # Update plan from items
-    items = obj.get("items", {}).get("data", [])
-    if items:
-        price_id = items[0].get("price", {}).get("id", "")
-        settings = get_settings()
-        price_to_plan = {
-            settings.STRIPE_STARTER_PRICE_ID: "starter",
-            settings.STRIPE_PRO_PRICE_ID: "pro",
-            settings.STRIPE_AGENCY_PRICE_ID: "agency",
-        }
-        new_plan = price_to_plan.get(price_id)
-        if new_plan:
-            billing.plan_type = new_plan
-
-    period_end = obj.get("current_period_end")
-    if period_end:
-        billing.current_period_end = datetime.fromtimestamp(period_end, tz=timezone.utc)
-
-    # Clear grace period if back to active
-    if billing.subscription_status == "active":
-        billing.grace_period_ends_at = None
-
-    db.flush()
-
-
-def _handle_subscription_deleted(obj: dict, db: Session) -> None:
-    """Handle customer.subscription.deleted — mark canceled."""
-    sub_id = obj.get("id")
-    if not sub_id:
-        return
     billing = _find_billing_by_subscription(sub_id, db)
     if billing:
-        billing.subscription_status = "canceled"
+        billing.subscription_status = "past_due"
+        if not billing.grace_period_ends_at:
+            billing.grace_period_ends_at = datetime.now(timezone.utc) + timedelta(days=GRACE_PERIOD_DAYS)
         db.flush()

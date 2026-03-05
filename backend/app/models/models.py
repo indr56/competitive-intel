@@ -304,8 +304,8 @@ class WorkspaceBilling(Base):
     subscription_status = Column(
         String(50), default=SubscriptionStatus.TRIALING.value, nullable=False,
     )
-    stripe_customer_id = Column(String(255), nullable=True, unique=True)
-    stripe_subscription_id = Column(String(255), nullable=True, unique=True)
+    razorpay_customer_id = Column(String(255), nullable=True, unique=True)
+    razorpay_subscription_id = Column(String(255), nullable=True, unique=True)
     trial_ends_at = Column(DateTime(timezone=True), nullable=True)
     current_period_end = Column(DateTime(timezone=True), nullable=True)
     cancel_at_period_end = Column(Boolean, default=False)
@@ -319,11 +319,11 @@ class WorkspaceBilling(Base):
 class WebhookEvent(Base):
     __tablename__ = "webhook_events"
     __table_args__ = (
-        UniqueConstraint("stripe_event_id", name="uq_stripe_event_id"),
+        UniqueConstraint("razorpay_event_id", name="uq_razorpay_event_id"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    stripe_event_id = Column(String(255), nullable=False)
+    razorpay_event_id = Column(String(255), nullable=False)
     event_type = Column(String(100), nullable=False)
     payload = Column(JSONB, nullable=False)
     processed = Column(Boolean, default=False)

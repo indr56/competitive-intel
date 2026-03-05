@@ -12,8 +12,8 @@ import type {
   Insight,
   InsightGenerateRequest,
   InsightRegenerateRequest,
+  PaymentVerifyResponse,
   PlanInfo,
-  PortalSessionResponse,
   SignedUrlResponse,
   Snapshot,
   TrackedPage,
@@ -241,9 +241,26 @@ export const billing = {
         }),
       }
     ),
-  portal: (workspaceId: string) =>
-    request<PortalSessionResponse>(
-      `/api/workspaces/${workspaceId}/billing/portal`,
+  verify: (
+    workspaceId: string,
+    data: {
+      razorpay_subscription_id: string;
+      razorpay_payment_id: string;
+      razorpay_signature: string;
+    }
+  ) =>
+    request<PaymentVerifyResponse>(
+      `/api/workspaces/${workspaceId}/billing/verify`,
+      { method: "POST", body: JSON.stringify(data) }
+    ),
+  cancel: (workspaceId: string) =>
+    request<Record<string, unknown>>(
+      `/api/workspaces/${workspaceId}/billing/cancel`,
+      { method: "POST" }
+    ),
+  sync: (workspaceId: string) =>
+    request<Record<string, unknown>>(
+      `/api/workspaces/${workspaceId}/billing/sync`,
       { method: "POST" }
     ),
 };

@@ -1,18 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import Script from "next/script";
 import {
-  CreditCard,
   Check,
   AlertTriangle,
   ArrowUpRight,
   Zap,
   Shield,
   Building2,
+  XCircle,
+  RefreshCw,
 } from "lucide-react";
 import { useActiveWorkspace } from "@/lib/hooks";
 import { billing as billingApi } from "@/lib/api";
 import type { BillingOverview, PlanInfo } from "@/lib/types";
+
+declare global {
+  interface Window {
+    Razorpay: any;
+  }
+}
 
 const STATUS_COLORS: Record<string, string> = {
   trialing: "bg-blue-50 text-blue-700",
@@ -43,8 +51,10 @@ export default function BillingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [checkingOut, setCheckingOut] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
-  useEffect(() => {
+  const fetchBilling = useCallback(() => {
     if (!activeId) return;
     setLoading(true);
     setError(null);
@@ -57,13 +67,58 @@ export default function BillingPage() {
       .finally(() => setLoading(false));
   }, [activeId]);
 
+  useEffect(() => {
+    fetchBilling();
+  }, [fetchBilling]);
+
   const handleUpgrade = async (planType: string) => {
     if (!activeId) return;
     setCheckingOut(planType);
     setError(null);
     try {
       const res = await billingApi.checkout(activeId, planType);
-      window.location.href = res.checkout_url;
+
+      // Open Razorpay Checkout
+      const options = {
+        key: res.razorpay_key_id,
+        subscription_id: res.subscription_id,
+        name: "Competitive Moves Intelligence",
+        description: `${planType.charAt(0).toUpperCase() + planType.slice(1)} Plan`,
+        handler: async (response: {
+          razorpay_subscription_id: string;
+          razorpay_payment_id: string;
+          razorpay_signature: string;
+        }) => {
+          // Verify payment on backend
+          try {
+            await billingApi.verify(activeId, {
+              razorpay_subscription_id: response.razorpay_subscription_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            });
+            // Refresh billing data
+            fetchBilling();
+          } catch (err: any) {
+            setError("Payment verification failed: " + err.message);
+          }
+        },
+        modal: {
+          ondismiss: () => {
+            setCheckingOut(null);
+          },
+        },
+        theme: {
+          color: "#111827",
+        },
+      };
+
+      if (typeof window.Razorpay === "undefined") {
+        setError("Razorpay SDK not loaded. Please refresh the page.");
+        return;
+      }
+
+      const rzp = new window.Razorpay(options);
+      rzp.open();
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -71,14 +126,31 @@ export default function BillingPage() {
     }
   };
 
-  const handleManage = async () => {
-    if (!activeId) return;
+  const handleCancel = async () => {
+    if (!activeId || !confirm("Are you sure you want to cancel your subscription?")) return;
+    setCancelling(true);
     setError(null);
     try {
-      const res = await billingApi.portal(activeId);
-      window.location.href = res.portal_url;
+      await billingApi.cancel(activeId);
+      fetchBilling();
     } catch (e: any) {
       setError(e.message);
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const handleSync = async () => {
+    if (!activeId) return;
+    setSyncing(true);
+    setError(null);
+    try {
+      await billingApi.sync(activeId);
+      fetchBilling();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -109,6 +181,9 @@ export default function BillingPage() {
 
   return (
     <div className="space-y-6">
+      {/* Load Razorpay checkout SDK */}
+      <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="lazyOnload" />
+
       <h1 className="text-2xl font-bold text-gray-900">Billing</h1>
 
       {error && (
@@ -125,17 +200,18 @@ export default function BillingPage() {
               Payment failed
             </p>
             <p className="text-xs text-red-600">
-              Please update your payment method to continue using all features.
+              Please subscribe again to continue using all features.
               {overview?.billing?.grace_period_ends_at && (
                 <> Grace period ends {new Date(overview.billing.grace_period_ends_at).toLocaleDateString()}.</>
               )}
             </p>
           </div>
           <button
-            onClick={handleManage}
-            className="ml-auto rounded-lg bg-red-600 px-3 py-1.5 text-xs text-white hover:bg-red-500 transition"
+            onClick={handleSync}
+            disabled={syncing}
+            className="ml-auto rounded-lg bg-red-600 px-3 py-1.5 text-xs text-white hover:bg-red-500 transition disabled:opacity-50"
           >
-            Update Payment
+            {syncing ? "Syncing..." : "Refresh Status"}
           </button>
         </div>
       )}
@@ -174,14 +250,27 @@ export default function BillingPage() {
                 )}
             </p>
           </div>
-          {overview?.billing?.stripe_customer_id && (
+          <div className="flex items-center gap-2">
             <button
-              onClick={handleManage}
-              className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 transition"
+              onClick={handleSync}
+              disabled={syncing}
+              className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 transition disabled:opacity-50"
+              title="Sync subscription status from Razorpay"
             >
-              <CreditCard className="h-3.5 w-3.5" /> Manage Subscription
+              <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} /> Sync
             </button>
-          )}
+            {overview?.billing?.razorpay_subscription_id &&
+              status === "active" && (
+                <button
+                  onClick={handleCancel}
+                  disabled={cancelling}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs text-red-600 hover:bg-red-50 transition disabled:opacity-50"
+                >
+                  <XCircle className="h-3.5 w-3.5" />
+                  {cancelling ? "Cancelling..." : "Cancel Subscription"}
+                </button>
+              )}
+          </div>
         </div>
 
         {/* Usage bars */}
@@ -199,6 +288,13 @@ export default function BillingPage() {
             />
           </div>
         )}
+
+        {/* Payment methods note */}
+        <div className="mt-4 pt-4 border-t">
+          <p className="text-xs text-gray-400">
+            Payments powered by Razorpay · Supports UPI, Cards, Netbanking, and Wallets
+          </p>
+        </div>
       </div>
 
       {/* Plan Cards */}
@@ -284,7 +380,7 @@ export default function BillingPage() {
                     }`}
                   >
                     {checkingOut === plan.plan_type ? (
-                      "Redirecting..."
+                      "Processing..."
                     ) : isUpgrade ? (
                       <>
                         Upgrade <ArrowUpRight className="h-3.5 w-3.5" />

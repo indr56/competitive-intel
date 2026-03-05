@@ -27,12 +27,13 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = ""
     EMAIL_FROM: str = "notifications@yourdomain.com"
 
-    # Stripe
-    STRIPE_SECRET_KEY: str = ""
-    STRIPE_WEBHOOK_SECRET: str = ""
-    STRIPE_STARTER_PRICE_ID: str = ""
-    STRIPE_PRO_PRICE_ID: str = ""
-    STRIPE_AGENCY_PRICE_ID: str = ""
+    # Razorpay
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_WEBHOOK_SECRET: str = ""
+    RAZORPAY_STARTER_PLAN_ID: str = ""
+    RAZORPAY_PRO_PLAN_ID: str = ""
+    RAZORPAY_AGENCY_PLAN_ID: str = ""
 
     # App
     APP_ENV: Literal["development", "staging", "production"] = "development"

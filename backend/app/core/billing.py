@@ -1,5 +1,5 @@
 """
-Plan definitions and Stripe integration service.
+Plan definitions and Razorpay integration service.
 
 Competitor pricing analysis summary (informing our model):
 ─────────────────────────────────────────────────────────
@@ -26,11 +26,14 @@ Patterns adopted for our product:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import stripe
+import razorpay
 
 from app.core.config import get_settings
 
@@ -82,6 +85,18 @@ ACTIVE_STATUSES = {"trialing", "active"}
 # Statuses that allow read-only (grace period)
 GRACE_STATUSES = {"past_due"}
 
+# Razorpay subscription states → our internal status mapping
+RAZORPAY_STATUS_MAP: dict[str, str] = {
+    "created": "incomplete",
+    "authenticated": "trialing",
+    "active": "active",
+    "paused": "past_due",
+    "cancelled": "canceled",
+    "completed": "canceled",
+    "halted": "past_due",
+    "pending": "incomplete",
+}
+
 
 def get_plan_limits(plan_type: str) -> dict[str, Any]:
     """Get limits for a plan type. Falls back to starter."""
@@ -109,80 +124,121 @@ def is_billing_active(status: str, grace_period_ends_at: datetime | None = None)
     return False
 
 
-def get_stripe_price_id(plan_type: str) -> str:
-    """Map plan type to Stripe Price ID."""
+def get_razorpay_plan_id(plan_type: str) -> str:
+    """Map plan type to Razorpay Plan ID."""
     settings = get_settings()
     mapping = {
-        "starter": settings.STRIPE_STARTER_PRICE_ID,
-        "pro": settings.STRIPE_PRO_PRICE_ID,
-        "agency": settings.STRIPE_AGENCY_PRICE_ID,
+        "starter": settings.RAZORPAY_STARTER_PLAN_ID,
+        "pro": settings.RAZORPAY_PRO_PLAN_ID,
+        "agency": settings.RAZORPAY_AGENCY_PLAN_ID,
     }
-    price_id = mapping.get(plan_type)
-    if not price_id:
-        raise ValueError(f"No Stripe price ID configured for plan: {plan_type}")
-    return price_id
+    plan_id = mapping.get(plan_type)
+    if not plan_id:
+        raise ValueError(f"No Razorpay plan ID configured for plan: {plan_type}")
+    return plan_id
 
 
-# ── Stripe Service ──
+def map_razorpay_status(razorpay_status: str) -> str:
+    """Map Razorpay subscription status to our internal status."""
+    return RAZORPAY_STATUS_MAP.get(razorpay_status, "incomplete")
 
 
-def _init_stripe() -> None:
+# ── Razorpay Service ──
+
+
+def _get_razorpay_client() -> razorpay.Client:
     settings = get_settings()
-    if settings.STRIPE_SECRET_KEY:
-        stripe.api_key = settings.STRIPE_SECRET_KEY
+    client = razorpay.Client(auth=(settings.RAZORPAY_KEY_ID, settings.RAZORPAY_KEY_SECRET))
+    return client
 
 
-def create_stripe_customer(workspace_id: str, workspace_name: str, email: str | None = None) -> str:
-    """Create a Stripe customer for a workspace. Returns stripe_customer_id."""
-    _init_stripe()
-    customer = stripe.Customer.create(
-        name=workspace_name,
-        email=email,
-        metadata={"workspace_id": workspace_id},
-    )
-    return customer.id
+def create_razorpay_customer(
+    workspace_id: str, workspace_name: str, email: str | None = None
+) -> str:
+    """Create a Razorpay customer for a workspace. Returns razorpay_customer_id."""
+    client = _get_razorpay_client()
+    data: dict[str, Any] = {
+        "name": workspace_name,
+        "notes": {"workspace_id": workspace_id},
+    }
+    if email:
+        data["email"] = email
+    customer = client.customer.create(data)
+    return customer["id"]
 
 
-def create_checkout_session(
-    stripe_customer_id: str,
+def create_razorpay_subscription(
+    razorpay_customer_id: str,
     plan_type: str,
     workspace_id: str,
-    success_url: str,
-    cancel_url: str,
-) -> dict[str, str]:
-    """Create a Stripe Checkout Session. Returns {checkout_url, session_id}."""
-    _init_stripe()
-    price_id = get_stripe_price_id(plan_type)
+) -> dict[str, Any]:
+    """
+    Create a Razorpay Subscription.
+    Returns {subscription_id, short_url} — short_url is a payment link fallback.
+    The frontend uses the subscription_id to open Razorpay Checkout.
+    """
+    client = _get_razorpay_client()
+    razorpay_plan_id = get_razorpay_plan_id(plan_type)
 
-    session = stripe.checkout.Session.create(
-        customer=stripe_customer_id,
-        mode="subscription",
-        line_items=[{"price": price_id, "quantity": 1}],
-        success_url=success_url,
-        cancel_url=cancel_url,
-        subscription_data={
-            "trial_period_days": TRIAL_DAYS,
-            "metadata": {"workspace_id": workspace_id, "plan_type": plan_type},
+    subscription = client.subscription.create({
+        "plan_id": razorpay_plan_id,
+        "customer_id": razorpay_customer_id,
+        "total_count": 120,  # max billing cycles (10 years monthly)
+        "notes": {
+            "workspace_id": workspace_id,
+            "plan_type": plan_type,
         },
-        metadata={"workspace_id": workspace_id, "plan_type": plan_type},
-    )
-    return {"checkout_url": session.url, "session_id": session.id}
+    })
+
+    return {
+        "subscription_id": subscription["id"],
+        "short_url": subscription.get("short_url", ""),
+        "status": subscription.get("status", "created"),
+    }
 
 
-def create_portal_session(stripe_customer_id: str, return_url: str) -> str:
-    """Create a Stripe Customer Portal session. Returns portal URL."""
-    _init_stripe()
-    session = stripe.billing_portal.Session.create(
-        customer=stripe_customer_id,
-        return_url=return_url,
-    )
-    return session.url
+def fetch_razorpay_subscription(subscription_id: str) -> dict[str, Any]:
+    """Fetch current subscription state from Razorpay."""
+    client = _get_razorpay_client()
+    return client.subscription.fetch(subscription_id)
 
 
-def verify_webhook_signature(payload: bytes, sig_header: str) -> dict:
-    """Verify Stripe webhook signature. Returns parsed event."""
+def cancel_razorpay_subscription(subscription_id: str, cancel_at_cycle_end: bool = True) -> dict[str, Any]:
+    """Cancel a Razorpay subscription."""
+    client = _get_razorpay_client()
+    return client.subscription.cancel(subscription_id, {"cancel_at_cycle_end": cancel_at_cycle_end})
+
+
+def verify_webhook_signature(payload: bytes, signature: str) -> bool:
+    """
+    Verify Razorpay webhook signature.
+    Returns True if valid, raises ValueError if invalid.
+    """
     settings = get_settings()
-    event = stripe.Webhook.construct_event(
-        payload, sig_header, settings.STRIPE_WEBHOOK_SECRET,
-    )
-    return event
+    secret = settings.RAZORPAY_WEBHOOK_SECRET
+    if not secret:
+        logger.warning("RAZORPAY_WEBHOOK_SECRET not set — skipping signature verification")
+        return True
+
+    expected_signature = hmac.new(
+        key=secret.encode("utf-8"),
+        msg=payload,
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected_signature, signature):
+        raise ValueError("Invalid Razorpay webhook signature")
+    return True
+
+
+def verify_payment_signature(payment_data: dict[str, str]) -> bool:
+    """
+    Verify Razorpay payment signature after checkout completion.
+    payment_data must contain: razorpay_subscription_id, razorpay_payment_id, razorpay_signature
+    """
+    client = _get_razorpay_client()
+    try:
+        client.utility.verify_payment_signature(payment_data)
+        return True
+    except razorpay.errors.SignatureVerificationError:
+        return False
