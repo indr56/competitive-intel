@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.plan_enforcement import enforce_billing_active, enforce_competitor_limit
 from app.models.models import Competitor, Workspace
 from app.schemas.schemas import CompetitorCreate, CompetitorRead, CompetitorUpdate
 
@@ -26,6 +27,9 @@ def create_competitor(
     ws = db.query(Workspace).filter(Workspace.id == workspace_id).first()
     if not ws:
         raise HTTPException(status_code=404, detail="Workspace not found")
+
+    # Plan enforcement
+    enforce_competitor_limit(workspace_id, db)
 
     existing = (
         db.query(Competitor)

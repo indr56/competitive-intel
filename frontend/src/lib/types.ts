@@ -212,3 +212,55 @@ export interface SignedUrlResponse {
   signed_url: string;
   digest_id: string;
 }
+
+// ── Billing ──
+
+export interface PlanLimits {
+  max_competitors: number;
+  max_tracked_pages: number;
+  min_check_interval_hours: number;
+  white_label: boolean;
+  max_workspaces: number;
+}
+
+export interface PlanInfo {
+  plan_type: string;
+  name: string;
+  price_monthly_cents: number;
+  limits: PlanLimits;
+}
+
+export interface WorkspaceBilling {
+  id: string;
+  workspace_id: string;
+  plan_type: string;
+  subscription_status: string;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  trial_ends_at: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  grace_period_ends_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BillingOverview {
+  billing: WorkspaceBilling | null;
+  plan: PlanInfo;
+  usage: {
+    competitors: number;
+    competitors_limit: number;
+    tracked_pages: number;
+    tracked_pages_limit: number;
+  };
+}
+
+export interface CheckoutSessionResponse {
+  checkout_url: string;
+  session_id: string;
+}
+
+export interface PortalSessionResponse {
+  portal_url: string;
+}

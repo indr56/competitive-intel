@@ -1,5 +1,7 @@
 import type {
+  BillingOverview,
   ChangeEvent,
+  CheckoutSessionResponse,
   Competitor,
   CompetitorCreate,
   CompetitorUpdate,
@@ -10,6 +12,8 @@ import type {
   Insight,
   InsightGenerateRequest,
   InsightRegenerateRequest,
+  PlanInfo,
+  PortalSessionResponse,
   SignedUrlResponse,
   Snapshot,
   TrackedPage,
@@ -218,6 +222,29 @@ export const whiteLabel = {
     request<WhiteLabelConfig>(
       `/api/workspaces/${workspaceId}/white-label`,
       { method: "PUT", body: JSON.stringify(data) }
+    ),
+};
+
+// ── Billing ──
+
+export const billing = {
+  plans: () => request<PlanInfo[]>("/api/billing/plans"),
+  overview: (workspaceId: string) =>
+    request<BillingOverview>(`/api/workspaces/${workspaceId}/billing`),
+  checkout: (workspaceId: string, planType: string) =>
+    request<CheckoutSessionResponse>(
+      `/api/workspaces/${workspaceId}/billing/checkout`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          plan_type: planType,
+        }),
+      }
+    ),
+  portal: (workspaceId: string) =>
+    request<PortalSessionResponse>(
+      `/api/workspaces/${workspaceId}/billing/portal`,
+      { method: "POST" }
     ),
 };
 

@@ -251,3 +251,57 @@ class PaginatedResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+# ── Billing ──
+
+
+class PlanLimits(BaseModel):
+    max_competitors: int
+    max_tracked_pages: int
+    min_check_interval_hours: int
+    white_label: bool
+    max_workspaces: int
+
+
+class PlanInfo(BaseModel):
+    plan_type: str
+    name: str
+    price_monthly_cents: int
+    limits: PlanLimits
+
+
+class WorkspaceBillingRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    plan_type: str
+    subscription_status: str
+    stripe_customer_id: str | None
+    stripe_subscription_id: str | None
+    trial_ends_at: datetime | None
+    current_period_end: datetime | None
+    cancel_at_period_end: bool
+    grace_period_ends_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class BillingOverview(BaseModel):
+    billing: WorkspaceBillingRead | None
+    plan: PlanInfo
+    usage: dict[str, Any]
+
+
+class CheckoutSessionRequest(BaseModel):
+    plan_type: str
+    success_url: str | None = None
+    cancel_url: str | None = None
+
+
+class CheckoutSessionResponse(BaseModel):
+    checkout_url: str
+    session_id: str
+
+
+class PortalSessionResponse(BaseModel):
+    portal_url: str
