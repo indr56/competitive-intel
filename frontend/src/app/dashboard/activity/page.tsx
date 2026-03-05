@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useActiveWorkspace } from "@/lib/hooks";
-import { activityFeed } from "@/lib/api";
-import type { ActivityFeedItem, SignalType } from "@/lib/types";
+import { activityFeed, events as eventsApi, competitors as compApi } from "@/lib/api";
+import type { ActivityFeedItem, Competitor } from "@/lib/types";
 import {
   Filter,
   Newspaper,
@@ -15,6 +15,8 @@ import {
   Tag,
   TrendingUp,
   ExternalLink,
+  Plus,
+  X,
 } from "lucide-react";
 
 const SIGNAL_META: Record<
@@ -96,6 +98,60 @@ export default function ActivityFeedPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [signalFilter, setSignalFilter] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  // Competitors for the form
+  const [competitors, setCompetitors] = useState<Competitor[]>([]);
+  useEffect(() => {
+    if (!activeId) return;
+    compApi.list(activeId).then(setCompetitors).catch(() => {});
+  }, [activeId]);
+
+  // Form state
+  const [showForm, setShowForm] = useState(false);
+  const [formComp, setFormComp] = useState("");
+  const [formSignal, setFormSignal] = useState("blog_post");
+  const [formSeverity, setFormSeverity] = useState("medium");
+  const [formTitle, setFormTitle] = useState("");
+  const [formDesc, setFormDesc] = useState("");
+  const [formUrl, setFormUrl] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [formSuccess, setFormSuccess] = useState<string | null>(null);
+
+  const resetForm = () => {
+    setFormTitle("");
+    setFormDesc("");
+    setFormUrl("");
+    setFormError(null);
+    setFormSuccess(null);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeId || !formComp) return;
+    setFormError(null);
+    setFormSuccess(null);
+    setSubmitting(true);
+    try {
+      await eventsApi.create(activeId, formComp, {
+        signal_type: formSignal,
+        title: formTitle,
+        description: formDesc || undefined,
+        source_url: formUrl || undefined,
+        severity: formSeverity,
+      });
+      setFormSuccess("Signal reported! It now appears in the feed.");
+      setFormTitle("");
+      setFormDesc("");
+      setFormUrl("");
+      setRefreshKey((k) => k + 1); // trigger feed reload
+    } catch (err: any) {
+      setFormError(err.message || "Failed to create signal");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     if (!activeId) return;
@@ -109,13 +165,20 @@ export default function ActivityFeedPage() {
       .then(setItems)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [activeId, signalFilter]);
+  }, [activeId, signalFilter, refreshKey]);
 
   // Count by signal type for summary badges
   const typeCounts: Record<string, number> = {};
   items.forEach((item) => {
     typeCounts[item.signal_type] = (typeCounts[item.signal_type] || 0) + 1;
   });
+
+  // Set default competitor when competitors load
+  useEffect(() => {
+    if (competitors.length > 0 && !formComp) {
+      setFormComp(competitors[0].id);
+    }
+  }, [competitors, formComp]);
 
   return (
     <div className="space-y-6">
@@ -127,21 +190,161 @@ export default function ActivityFeedPage() {
             All competitive intelligence signals across your competitors
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-gray-400" />
-          <select
-            value={signalFilter}
-            onChange={(e) => setSignalFilter(e.target.value)}
-            className="rounded-lg border px-3 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => { setShowForm(!showForm); resetForm(); }}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 transition"
           >
-            {SIGNAL_FILTERS.map((f) => (
-              <option key={f.value} value={f.value}>
-                {f.label}
-              </option>
-            ))}
-          </select>
+            {showForm ? <X className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+            {showForm ? "Cancel" : "Report Signal"}
+          </button>
+          <div className="flex items-center gap-2">
+            <Filter className="h-4 w-4 text-gray-400" />
+            <select
+              value={signalFilter}
+              onChange={(e) => setSignalFilter(e.target.value)}
+              className="rounded-lg border px-3 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {SIGNAL_FILTERS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
+
+      {/* Report Signal Form */}
+      {showForm && (
+        <form
+          onSubmit={handleSubmit}
+          className="rounded-xl border-2 border-blue-200 bg-blue-50/50 p-5 space-y-4"
+        >
+          <h2 className="text-sm font-semibold text-gray-900">Report a Competitive Signal</h2>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Competitor */}
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Competitor *
+              </label>
+              <select
+                value={formComp}
+                onChange={(e) => setFormComp(e.target.value)}
+                required
+                className="w-full rounded-lg border px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Select competitor…</option>
+                {competitors.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.domain})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Signal Type */}
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Signal Type *
+              </label>
+              <select
+                value={formSignal}
+                onChange={(e) => setFormSignal(e.target.value)}
+                className="w-full rounded-lg border px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {SIGNAL_FILTERS.filter((f) => f.value).map((f) => (
+                  <option key={f.value} value={f.value}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Severity */}
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">
+                Severity *
+              </label>
+              <select
+                value={formSeverity}
+                onChange={(e) => setFormSeverity(e.target.value)}
+                className="w-full rounded-lg border px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="critical">Critical</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Title */}
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Title *
+            </label>
+            <input
+              type="text"
+              value={formTitle}
+              onChange={(e) => setFormTitle(e.target.value)}
+              required
+              placeholder='e.g. "Cursor raises $200M Series C"'
+              className="w-full rounded-lg border px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* Description */}
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Description
+            </label>
+            <textarea
+              value={formDesc}
+              onChange={(e) => setFormDesc(e.target.value)}
+              rows={2}
+              placeholder="What happened? Why does it matter?"
+              className="w-full rounded-lg border px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* Source URL */}
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Source URL
+            </label>
+            <input
+              type="url"
+              value={formUrl}
+              onChange={(e) => setFormUrl(e.target.value)}
+              placeholder="https://…"
+              className="w-full rounded-lg border px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* Errors / Success */}
+          {formError && (
+            <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
+              {formError}
+            </div>
+          )}
+          {formSuccess && (
+            <div className="rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-xs text-green-700">
+              {formSuccess}
+            </div>
+          )}
+
+          {/* Submit */}
+          <button
+            type="submit"
+            disabled={submitting || !formComp || !formTitle}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          >
+            {submitting ? "Submitting…" : "Submit Signal"}
+          </button>
+        </form>
+      )}
 
       {/* Signal type summary badges */}
       {!loading && items.length > 0 && (

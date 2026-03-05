@@ -244,6 +244,17 @@ export const events = {
   },
   get: (eventId: string) => request<CompetitorEvent>(`/api/events/${eventId}`),
   signalTypes: () => request<string[]>("/api/events/signal-types"),
+  create: (workspaceId: string, competitorId: string, data: {
+    signal_type: string;
+    title: string;
+    description?: string;
+    source_url?: string;
+    severity?: string;
+  }) =>
+    request<CompetitorEvent>(
+      `/api/workspaces/${workspaceId}/competitors/${competitorId}/events`,
+      { method: "POST", body: JSON.stringify(data) }
+    ),
 };
 
 export const activityFeed = {
