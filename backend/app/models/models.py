@@ -5,10 +5,12 @@ from sqlalchemy import (
     Column,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
@@ -177,6 +179,7 @@ class ChangeEvent(Base):
     diff = relationship("Diff", back_populates="change_event")
     workspace = relationship("Workspace", back_populates="change_events")
     competitor = relationship("Competitor", back_populates="change_events")
+    insights = relationship("Insight", back_populates="change_event", cascade="all, delete-orphan")
 
 
 class Digest(Base):
@@ -192,3 +195,55 @@ class Digest(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     workspace = relationship("Workspace", back_populates="digests")
+
+
+# ── AI Insights ──
+
+
+class InsightType(str, enum.Enum):
+    CHANGE_ANALYSIS = "change_analysis"
+    BATTLECARD = "battlecard"
+    EXECUTIVE_BRIEF = "executive_brief"
+    SALES_ENABLEMENT = "sales_enablement"
+
+
+class Insight(Base):
+    __tablename__ = "insights"
+    __table_args__ = (
+        UniqueConstraint(
+            "change_event_id", "insight_type", "version",
+            name="uq_insight_event_type_version",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    change_event_id = Column(
+        UUID(as_uuid=True), ForeignKey("change_events.id"), nullable=False,
+    )
+    insight_type = Column(String(50), nullable=False)
+    version = Column(Integer, default=1, nullable=False)
+    prompt_template_id = Column(String(100), nullable=False)
+
+    # Structured content
+    content = Column(JSONB, nullable=False)
+    evidence_refs = Column(JSONB, nullable=True)
+    is_grounded = Column(Boolean, default=True)
+    validation_errors = Column(JSONB, nullable=True)
+
+    # LLM metadata
+    model_used = Column(String(100), nullable=True)
+    provider = Column(String(50), nullable=True)
+    token_count_input = Column(Integer, nullable=True)
+    token_count_output = Column(Integer, nullable=True)
+    cost_usd = Column(Float, nullable=True)
+    latency_ms = Column(Integer, nullable=True)
+
+    # Regeneration
+    regeneration_reason = Column(String(100), nullable=True)
+    regenerated_from_id = Column(
+        UUID(as_uuid=True), ForeignKey("insights.id"), nullable=True,
+    )
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    change_event = relationship("ChangeEvent", back_populates="insights")
+    regenerated_from = relationship("Insight", remote_side="Insight.id")

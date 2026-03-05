@@ -144,6 +144,16 @@ def run_pipeline_sync(tracked_page_id: str, db: Session) -> Dict[str, Any]:
         impact, classification.used_llm,
     )
 
+    # ── Step 6: Generate structured insights ──
+    insight_ids = []
+    try:
+        from app.services.insight_generator import generate_all_insights
+
+        insights = generate_all_insights(str(change_event.id), db)
+        insight_ids = [str(i.id) for i in insights]
+    except Exception as exc:
+        logger.warning("Insight generation failed (non-fatal): %s", exc)
+
     return {
         "status": "change_detected",
         "snapshot_id": str(new_snapshot.id),
@@ -151,4 +161,5 @@ def run_pipeline_sync(tracked_page_id: str, db: Session) -> Dict[str, Any]:
         "change_event_id": str(change_event.id),
         "impact_score": impact,
         "noise_score": diff_result.noise_score,
+        "insight_ids": insight_ids,
     }

@@ -8,6 +8,8 @@ from app.models.models import (
     Diff,
     ChangeEvent,
     Digest,
+    Insight,
+    InsightType,
 )
 
 __all__ = [
@@ -20,4 +22,6 @@ __all__ = [
     "Diff",
     "ChangeEvent",
     "Digest",
+    "Insight",
+    "InsightType",
 ]

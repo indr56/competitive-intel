@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.api import workspaces, competitors, pages, snapshots, changes, digests
+from app.api import workspaces, competitors, pages, snapshots, changes, digests, insights
 
 settings = get_settings()
 
@@ -26,6 +26,7 @@ app.include_router(pages.router)
 app.include_router(snapshots.router)
 app.include_router(changes.router)
 app.include_router(digests.router)
+app.include_router(insights.router)
 
 
 @app.get("/health")
