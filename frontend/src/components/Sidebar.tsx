@@ -11,11 +11,13 @@ import {
   Mail,
   FileText,
   Settings,
+  Zap,
 } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: Home },
   { href: "/dashboard/competitors", label: "Competitors", icon: Globe },
+  { href: "/dashboard/activity", label: "Activity Feed", icon: Zap },
   { href: "/dashboard/changes", label: "Change Feed", icon: Activity },
   { href: "/dashboard/digests", label: "Digests", icon: Mail },
   { href: "/dashboard/pages", label: "Tracked Pages", icon: FileText },
