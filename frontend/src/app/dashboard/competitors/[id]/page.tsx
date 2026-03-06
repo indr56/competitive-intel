@@ -342,12 +342,21 @@ export default function CompetitorDetailPage() {
                   </div>
                   {/* Test result inline */}
                   {testResult && (
-                    <div className={`mt-2 flex items-center gap-1.5 text-xs ${statusColor}`}>
-                      {StatusIcon && <StatusIcon className="h-3.5 w-3.5" />}
-                      <span className="font-medium">{testResult.status}</span>
-                      <span className="text-gray-500">— {testResult.message}</span>
-                      {testResult.items_found > 0 && (
-                        <span className="text-gray-600">({testResult.items_found} items)</span>
+                    <div className="mt-2 space-y-1">
+                      <div className={`flex items-center gap-1.5 text-xs ${statusColor}`}>
+                        {StatusIcon && <StatusIcon className="h-3.5 w-3.5" />}
+                        <span className="font-medium">{testResult.status}</span>
+                        <span className="text-gray-500">— {testResult.message}</span>
+                        {testResult.items_found > 0 && (
+                          <span className="text-gray-600">({testResult.items_found} items)</span>
+                        )}
+                      </div>
+                      {testResult.status === "valid" && testResult.items_found > 0 && (
+                        <div className="flex items-center gap-2 bg-blue-50 rounded-lg px-3 py-1.5">
+                          <span className="text-[11px] text-blue-700">
+                            ✓ Source validated. Click <strong>Scan Signals</strong> above to import events into your Activity Feed.
+                          </span>
+                        </div>
                       )}
                     </div>
                   )}

@@ -117,7 +117,7 @@ class Workspace(Base):
 
     account = relationship("Account", back_populates="workspaces")
     competitors = relationship("Competitor", back_populates="workspace", cascade="all, delete-orphan")
-    change_events = relationship("ChangeEvent", back_populates="workspace")
+    change_events = relationship("ChangeEvent", back_populates="workspace", cascade="all, delete-orphan")
     competitor_events = relationship("CompetitorEvent", back_populates="workspace", cascade="all, delete-orphan")
     signal_sources = relationship("SignalSource", back_populates="workspace", cascade="all, delete-orphan")
     digests = relationship("Digest", back_populates="workspace", cascade="all, delete-orphan")
@@ -141,7 +141,7 @@ class Competitor(Base):
 
     workspace = relationship("Workspace", back_populates="competitors")
     tracked_pages = relationship("TrackedPage", back_populates="competitor", cascade="all, delete-orphan")
-    change_events = relationship("ChangeEvent", back_populates="competitor")
+    change_events = relationship("ChangeEvent", back_populates="competitor", cascade="all, delete-orphan")
     competitor_events = relationship("CompetitorEvent", back_populates="competitor", cascade="all, delete-orphan")
     signal_sources = relationship("SignalSource", back_populates="competitor", cascade="all, delete-orphan")
 
@@ -193,7 +193,7 @@ class Diff(Base):
     tracked_page = relationship("TrackedPage", back_populates="diffs")
     snapshot_before = relationship("Snapshot", foreign_keys=[snapshot_before_id])
     snapshot_after = relationship("Snapshot", foreign_keys=[snapshot_after_id])
-    change_event = relationship("ChangeEvent", back_populates="diff", uselist=False)
+    change_event = relationship("ChangeEvent", back_populates="diff", uselist=False, cascade="all, delete-orphan")
 
 
 class ChangeEvent(Base):
