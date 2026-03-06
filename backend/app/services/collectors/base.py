@@ -56,6 +56,16 @@ class BaseCollector(ABC):
         """
         ...
 
+    def collect_for_url(
+        self, url: str, competitor: Competitor
+    ) -> List[dict[str, Any]]:
+        """
+        Collect events from a specific URL (for manual signal sources).
+        Default: delegates to collect_for_competitor (auto-discovery).
+        Subclasses should override for URL-specific collection.
+        """
+        return self.collect_for_competitor(competitor)
+
     def run_for_competitor(self, competitor: Competitor) -> CollectorResult:
         """Run collection for a single competitor with dedup and error handling."""
         result = CollectorResult()

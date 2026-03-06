@@ -25,6 +25,9 @@ import type {
   WhiteLabelConfigUpsert,
   Workspace,
   WorkspaceCreate,
+  SignalSource,
+  TestSourceResult,
+  ScanResult,
 } from "./types";
 
 export const API_URL =
@@ -265,6 +268,54 @@ export const activityFeed = {
     if (params?.offset) qs.set("offset", String(params.offset));
     const q = qs.toString();
     return request<ActivityFeedItem[]>(`/api/workspaces/${workspaceId}/activity${q ? `?${q}` : ""}`);
+  },
+};
+
+// ── Signal Sources ──
+
+export const signalSources = {
+  list: (competitorId: string, signalType?: string) => {
+    const qs = signalType ? `?signal_type=${signalType}` : "";
+    return request<SignalSource[]>(`/api/competitors/${competitorId}/sources${qs}`);
+  },
+  get: (sourceId: string) => request<SignalSource>(`/api/sources/${sourceId}`),
+  create: (competitorId: string, data: {
+    signal_type: string;
+    source_url: string;
+    source_label?: string;
+    poll_interval_hours?: number;
+  }) =>
+    request<SignalSource>(
+      `/api/competitors/${competitorId}/sources`,
+      { method: "POST", body: JSON.stringify(data) }
+    ),
+  update: (sourceId: string, data: {
+    source_url?: string;
+    source_label?: string;
+    is_active?: boolean;
+    poll_interval_hours?: number;
+  }) =>
+    request<SignalSource>(
+      `/api/sources/${sourceId}`,
+      { method: "PATCH", body: JSON.stringify(data) }
+    ),
+  delete: (sourceId: string) =>
+    request<void>(`/api/sources/${sourceId}`, { method: "DELETE" }),
+  test: (sourceId: string) =>
+    request<TestSourceResult>(`/api/sources/${sourceId}/test`, { method: "POST" }),
+  testUrl: (signalType: string, sourceUrl: string) =>
+    request<TestSourceResult>(
+      `/api/sources/test-url?signal_type=${encodeURIComponent(signalType)}&source_url=${encodeURIComponent(sourceUrl)}`,
+      { method: "POST" }
+    ),
+  scan: (competitorId: string, signalTypes?: string[]) => {
+    const qs = signalTypes?.length
+      ? `?${signalTypes.map(t => `signal_types=${t}`).join("&")}`
+      : "";
+    return request<ScanResult>(
+      `/api/competitors/${competitorId}/scan${qs}`,
+      { method: "POST" }
+    );
   },
 };
 

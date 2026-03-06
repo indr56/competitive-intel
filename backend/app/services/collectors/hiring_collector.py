@@ -53,6 +53,15 @@ SALES_KEYWORDS = [
 class HiringCollector(BaseCollector):
     signal_type = SignalType.HIRING
 
+    def collect_for_url(
+        self, url: str, competitor: Competitor
+    ) -> List[dict[str, Any]]:
+        """Scrape a specific careers page URL."""
+        page_text = self._fetch_page(url)
+        if not page_text:
+            raise ValueError(f"Could not fetch {url}")
+        return self._extract_jobs(page_text, url, competitor)
+
     def collect_for_competitor(
         self, competitor: Competitor
     ) -> List[dict[str, Any]]:

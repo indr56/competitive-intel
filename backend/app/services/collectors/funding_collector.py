@@ -51,6 +51,15 @@ AMOUNT_PATTERN = re.compile(
 class FundingCollector(BaseCollector):
     signal_type = SignalType.FUNDING
 
+    def collect_for_url(
+        self, url: str, competitor: Competitor
+    ) -> List[dict[str, Any]]:
+        """Scrape a specific press/news URL for funding signals."""
+        page_text = self._fetch_page(url)
+        if not page_text:
+            raise ValueError(f"Could not fetch {url}")
+        return self._detect_funding(page_text, url, competitor)
+
     def collect_for_competitor(
         self, competitor: Competitor
     ) -> List[dict[str, Any]]:

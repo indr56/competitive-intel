@@ -35,6 +35,17 @@ MAX_ENTRIES = 20
 class BlogCollector(BaseCollector):
     signal_type = SignalType.BLOG_POST
 
+    def collect_for_url(
+        self, url: str, competitor: Competitor
+    ) -> List[dict[str, Any]]:
+        """Fetch a specific RSS/Atom feed URL."""
+        try:
+            entries = self._fetch_feed(url)
+            return entries[:MAX_ENTRIES]
+        except Exception as exc:
+            logger.error("BlogCollector: failed to fetch %s: %s", url, exc)
+            raise
+
     def collect_for_competitor(
         self, competitor: Competitor
     ) -> List[dict[str, Any]]:

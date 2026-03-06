@@ -29,6 +29,20 @@ REVIEW_COUNT_PATTERN = re.compile(r'(\d[\d,]*)\s*(?:reviews?|ratings?)', re.IGNO
 class ReviewCollector(BaseCollector):
     signal_type = SignalType.REVIEW
 
+    def collect_for_url(
+        self, url: str, competitor: Competitor
+    ) -> List[dict[str, Any]]:
+        """Check a specific review platform URL."""
+        html = self._fetch_page(url)
+        if not html:
+            raise ValueError(f"Could not fetch {url}")
+        rating = self._extract_rating(html)
+        review_count = self._extract_review_count(html)
+        if rating is None and review_count is None:
+            return []
+        platform = "trustpilot" if "trustpilot" in url.lower() else "g2" if "g2.com" in url.lower() else "other"
+        return self._build_review_event(competitor, platform, url, rating, review_count)
+
     def collect_for_competitor(
         self, competitor: Competitor
     ) -> List[dict[str, Any]]:

@@ -257,6 +257,51 @@ export type SignalType =
   | "review"
   | "marketing";
 
+// ── Signal Sources ──
+
+export interface SignalSource {
+  id: string;
+  workspace_id: string;
+  competitor_id: string;
+  signal_type: string;
+  source_url: string;
+  source_label: string | null;
+  is_active: boolean;
+  poll_interval_hours: number;
+  last_checked_at: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  source_kind: string;
+  metadata_json: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface TestSourceResult {
+  status: "valid" | "unreachable" | "unexpected_content" | "no_items_found";
+  message: string;
+  items_found: number;
+  details: Record<string, unknown> | null;
+}
+
+export interface ScanResultItem {
+  signal_type: string;
+  source_url: string | null;
+  events_found: number;
+  events_created: number;
+  events_skipped_dedup: number;
+  error: string | null;
+}
+
+export interface ScanResult {
+  competitor_id: string;
+  competitor_name: string;
+  sources_scanned: number;
+  total_events_found: number;
+  total_events_created: number;
+  results: ScanResultItem[];
+}
+
 // ── Billing ──
 
 export interface PlanLimits {
