@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -93,6 +96,28 @@ def get_event(event_id: uuid.UUID, db: Session = Depends(get_db)):
     return event
 
 
+@router.post("/api/events/{event_id}/analyze", response_model=CompetitorEventRead)
+def analyze_event(event_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Generate or regenerate AI analysis for a competitor event."""
+    event = db.query(CompetitorEvent).filter(CompetitorEvent.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Competitor event not found")
+
+    # Clear existing analysis to force regeneration
+    event.ai_summary = None
+    event.ai_implications = None
+    db.commit()
+
+    from app.services.signal_analyzer import generate_signal_analysis
+    success = generate_signal_analysis(event, db)
+    db.refresh(event)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="AI analysis generation failed")
+
+    return event
+
+
 @router.post(
     "/api/workspaces/{workspace_id}/competitors/{competitor_id}/events",
     response_model=CompetitorEventRead,
@@ -133,4 +158,13 @@ def create_event(
     db.add(event)
     db.commit()
     db.refresh(event)
+
+    # Generate AI analysis for the new event
+    try:
+        from app.services.signal_analyzer import generate_signal_analysis
+        generate_signal_analysis(event, db, competitor_name=comp.name)
+        db.refresh(event)
+    except Exception as exc:
+        logger.warning("AI analysis generation failed for event %s (non-fatal): %s", event.id, exc)
+
     return event
