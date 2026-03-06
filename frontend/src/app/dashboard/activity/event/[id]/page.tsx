@@ -17,6 +17,8 @@ import {
   Megaphone,
   Tag,
   TrendingUp,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
 import { events as eventsApi, competitors as compApi } from "@/lib/api";
 import type { CompetitorEvent, Competitor } from "@/lib/types";
@@ -50,6 +52,7 @@ export default function EventDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -65,6 +68,20 @@ export default function EventDetailPage() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [id]);
+
+  const handleAnalyze = async () => {
+    if (!event) return;
+    setAnalyzing(true);
+    setError(null);
+    try {
+      const updated = await eventsApi.analyze(event.id);
+      setEvent(updated);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
 
   const handleCopy = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -218,9 +235,22 @@ export default function EventDetailPage() {
               AI Analysis
             </span>
           </div>
-          <div className="p-8 text-center text-sm text-gray-400">
-            AI analysis has not been generated for this signal yet. 
-            Analysis is generated automatically when signals are processed by the intelligence pipeline.
+          <div className="p-8 text-center space-y-3">
+            <p className="text-sm text-gray-400">
+              AI analysis has not been generated for this signal yet.
+            </p>
+            <button
+              onClick={handleAnalyze}
+              disabled={analyzing}
+              className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50 transition"
+            >
+              {analyzing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {analyzing ? "Generating…" : "Generate Analysis"}
+            </button>
           </div>
         </div>
       )}

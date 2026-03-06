@@ -144,6 +144,14 @@ class BaseCollector(ABC):
             self.db.add(event)
             self.db.flush()
             self.db.commit()
+
+            # Generate AI analysis for the new event
+            try:
+                from app.services.signal_analyzer import generate_signal_analysis
+                generate_signal_analysis(event, self.db, competitor_name=competitor.name)
+            except Exception as exc:
+                logger.warning("AI analysis failed for event %s (non-fatal): %s", event.id, exc)
+
             return True
         except IntegrityError:
             self.db.rollback()

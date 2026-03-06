@@ -246,6 +246,7 @@ export const events = {
     return request<CompetitorEvent[]>(`/api/competitors/${competitorId}/events${qs}`);
   },
   get: (eventId: string) => request<CompetitorEvent>(`/api/events/${eventId}`),
+  analyze: (eventId: string) => request<CompetitorEvent>(`/api/events/${eventId}/analyze`, { method: "POST" }),
   signalTypes: () => request<string[]>("/api/events/signal-types"),
   create: (workspaceId: string, competitorId: string, data: {
     signal_type: string;

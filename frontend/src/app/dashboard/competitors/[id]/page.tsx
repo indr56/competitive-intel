@@ -97,7 +97,13 @@ export default function CompetitorDetailPage() {
     try {
       const res = await pagesApi.captureNow(pageId, true);
       const status = (res as any).status ?? "done";
-      setSuccess(status === "no_change" ? "Captured — no changes detected" : "Captured — changes detected!");
+      const STATUS_MSG: Record<string, string> = {
+        first_snapshot: "First snapshot captured — changes will appear after the next capture",
+        no_change: "Captured — no changes detected since last snapshot",
+        not_meaningful: "Captured — minor changes detected (below significance threshold)",
+        change_detected: "Captured — changes detected! View them in the Change Feed.",
+      };
+      setSuccess(STATUS_MSG[status] || `Capture complete (${status})`);
       setTimeout(() => setSuccess(null), 4000);
     } catch (e: any) { setError(e.message); }
     finally { setCapturing(null); }
