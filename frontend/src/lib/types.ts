@@ -122,11 +122,13 @@ export interface Digest {
 }
 
 export interface RankingEntry {
-  change_event_id: string;
+  change_event_id?: string;
+  event_id?: string;
   rank_score: number;
-  impact_score: number;
-  noise_score: number;
+  impact_score?: number;
+  noise_score?: number;
   severity: string;
+  signal_type?: string;
 }
 
 export interface Insight {

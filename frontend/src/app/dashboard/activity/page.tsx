@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useActiveWorkspace } from "@/lib/hooks";
 import { activityFeed, events as eventsApi, competitors as compApi } from "@/lib/api";
 import type { ActivityFeedItem, Competitor } from "@/lib/types";
+import Link from "next/link";
 import {
   Filter,
   Newspaper,
@@ -17,6 +18,7 @@ import {
   ExternalLink,
   Plus,
   X,
+  ChevronRight,
 } from "lucide-react";
 
 const SIGNAL_META: Record<
@@ -408,10 +410,15 @@ export default function ActivityFeedPage() {
             const meta =
               SIGNAL_META[item.signal_type] || SIGNAL_META.website_change;
             const Icon = meta.icon;
+            const detailHref =
+              item.source === "change_event"
+                ? `/dashboard/changes/${item.id}`
+                : `/dashboard/activity/event/${item.id}`;
             return (
-              <div
+              <Link
                 key={`${item.source}-${item.id}`}
-                className="rounded-xl border bg-white p-5 hover:shadow-sm transition"
+                href={detailHref}
+                className="block rounded-xl border bg-white p-5 hover:shadow-md hover:border-blue-200 transition group"
               >
                 {/* Top row: signal icon, type badge, severity, competitor, date */}
                 <div className="flex items-start justify-between mb-2">
@@ -437,14 +444,17 @@ export default function ActivityFeedPage() {
                       </span>
                     )}
                   </div>
-                  <span className="text-xs text-gray-400 whitespace-nowrap">
-                    {new Date(item.event_time).toLocaleDateString("en-US", {
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 whitespace-nowrap">
+                      {new Date(item.event_time).toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
+                    </span>
+                    <ChevronRight className="h-4 w-4 text-gray-300 group-hover:text-blue-500 transition" />
+                  </div>
                 </div>
 
                 {/* Title */}
@@ -461,17 +471,14 @@ export default function ActivityFeedPage() {
 
                 {/* Source URL link */}
                 {item.source_url && (
-                  <a
-                    href={item.source_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 mt-2 text-xs text-blue-500 hover:text-blue-700 hover:underline"
+                  <span
+                    className="inline-flex items-center gap-1 mt-2 text-xs text-blue-500"
                   >
                     <ExternalLink className="h-3 w-3" />
                     View source
-                  </a>
+                  </span>
                 )}
-              </div>
+              </Link>
             );
           })}
         </div>
