@@ -1,10 +1,12 @@
 import type {
+  ActivityFeedItem,
   BillingOverview,
   ChangeEvent,
   CheckoutSessionResponse,
   Competitor,
   CompetitorCreate,
   CompetitorUpdate,
+  CompetitorEvent,
   Diff,
   Digest,
   DigestGenerateResponse,
@@ -23,6 +25,9 @@ import type {
   WhiteLabelConfigUpsert,
   Workspace,
   WorkspaceCreate,
+  SignalSource,
+  TestSourceResult,
+  ScanResult,
 } from "./types";
 
 export const API_URL =
@@ -223,6 +228,95 @@ export const whiteLabel = {
       `/api/workspaces/${workspaceId}/white-label`,
       { method: "PUT", body: JSON.stringify(data) }
     ),
+};
+
+// ── Events (Multi-Signal) ──
+
+export const events = {
+  list: (workspaceId: string, params?: { signal_type?: string; competitor_id?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.signal_type) qs.set("signal_type", params.signal_type);
+    if (params?.competitor_id) qs.set("competitor_id", params.competitor_id);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const q = qs.toString();
+    return request<CompetitorEvent[]>(`/api/workspaces/${workspaceId}/events${q ? `?${q}` : ""}`);
+  },
+  forCompetitor: (competitorId: string, signalType?: string) => {
+    const qs = signalType ? `?signal_type=${signalType}` : "";
+    return request<CompetitorEvent[]>(`/api/competitors/${competitorId}/events${qs}`);
+  },
+  get: (eventId: string) => request<CompetitorEvent>(`/api/events/${eventId}`),
+  signalTypes: () => request<string[]>("/api/events/signal-types"),
+  create: (workspaceId: string, competitorId: string, data: {
+    signal_type: string;
+    title: string;
+    description?: string;
+    source_url?: string;
+    severity?: string;
+  }) =>
+    request<CompetitorEvent>(
+      `/api/workspaces/${workspaceId}/competitors/${competitorId}/events`,
+      { method: "POST", body: JSON.stringify(data) }
+    ),
+};
+
+export const activityFeed = {
+  list: (workspaceId: string, params?: { signal_type?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.signal_type) qs.set("signal_type", params.signal_type);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.offset) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return request<ActivityFeedItem[]>(`/api/workspaces/${workspaceId}/activity${q ? `?${q}` : ""}`);
+  },
+};
+
+// ── Signal Sources ──
+
+export const signalSources = {
+  list: (competitorId: string, signalType?: string) => {
+    const qs = signalType ? `?signal_type=${signalType}` : "";
+    return request<SignalSource[]>(`/api/competitors/${competitorId}/sources${qs}`);
+  },
+  get: (sourceId: string) => request<SignalSource>(`/api/sources/${sourceId}`),
+  create: (competitorId: string, data: {
+    signal_type: string;
+    source_url: string;
+    source_label?: string;
+    poll_interval_hours?: number;
+  }) =>
+    request<SignalSource>(
+      `/api/competitors/${competitorId}/sources`,
+      { method: "POST", body: JSON.stringify(data) }
+    ),
+  update: (sourceId: string, data: {
+    source_url?: string;
+    source_label?: string;
+    is_active?: boolean;
+    poll_interval_hours?: number;
+  }) =>
+    request<SignalSource>(
+      `/api/sources/${sourceId}`,
+      { method: "PATCH", body: JSON.stringify(data) }
+    ),
+  delete: (sourceId: string) =>
+    request<void>(`/api/sources/${sourceId}`, { method: "DELETE" }),
+  test: (sourceId: string) =>
+    request<TestSourceResult>(`/api/sources/${sourceId}/test`, { method: "POST" }),
+  testUrl: (signalType: string, sourceUrl: string) =>
+    request<TestSourceResult>(
+      `/api/sources/test-url?signal_type=${encodeURIComponent(signalType)}&source_url=${encodeURIComponent(sourceUrl)}`,
+      { method: "POST" }
+    ),
+  scan: (competitorId: string, signalTypes?: string[]) => {
+    const qs = signalTypes?.length
+      ? `?${signalTypes.map(t => `signal_types=${t}`).join("&")}`
+      : "";
+    return request<ScanResult>(
+      `/api/competitors/${competitorId}/scan${qs}`,
+      { method: "POST" }
+    );
+  },
 };
 
 // ── Billing ──

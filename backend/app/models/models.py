@@ -61,6 +61,22 @@ class Severity(str, enum.Enum):
     CRITICAL = "critical"
 
 
+class SignalType(str, enum.Enum):
+    WEBSITE_CHANGE = "website_change"
+    PRICING_CHANGE = "pricing_change"
+    PRODUCT_CHANGE = "product_change"
+    BLOG_POST = "blog_post"
+    HIRING = "hiring"
+    FUNDING = "funding"
+    REVIEW = "review"
+    MARKETING = "marketing"
+
+
+class SourceKind(str, enum.Enum):
+    MANUAL = "manual"
+    AUTO_DISCOVERED = "auto_discovered"
+
+
 # ── Multi-tenant core ──
 
 
@@ -101,7 +117,9 @@ class Workspace(Base):
 
     account = relationship("Account", back_populates="workspaces")
     competitors = relationship("Competitor", back_populates="workspace", cascade="all, delete-orphan")
-    change_events = relationship("ChangeEvent", back_populates="workspace")
+    change_events = relationship("ChangeEvent", back_populates="workspace", cascade="all, delete-orphan")
+    competitor_events = relationship("CompetitorEvent", back_populates="workspace", cascade="all, delete-orphan")
+    signal_sources = relationship("SignalSource", back_populates="workspace", cascade="all, delete-orphan")
     digests = relationship("Digest", back_populates="workspace", cascade="all, delete-orphan")
     white_label_config = relationship("WhiteLabelConfig", back_populates="workspace", uselist=False, cascade="all, delete-orphan")
     billing = relationship("WorkspaceBilling", back_populates="workspace", uselist=False, cascade="all, delete-orphan")
@@ -123,7 +141,9 @@ class Competitor(Base):
 
     workspace = relationship("Workspace", back_populates="competitors")
     tracked_pages = relationship("TrackedPage", back_populates="competitor", cascade="all, delete-orphan")
-    change_events = relationship("ChangeEvent", back_populates="competitor")
+    change_events = relationship("ChangeEvent", back_populates="competitor", cascade="all, delete-orphan")
+    competitor_events = relationship("CompetitorEvent", back_populates="competitor", cascade="all, delete-orphan")
+    signal_sources = relationship("SignalSource", back_populates="competitor", cascade="all, delete-orphan")
 
 
 class TrackedPage(Base):
@@ -173,7 +193,7 @@ class Diff(Base):
     tracked_page = relationship("TrackedPage", back_populates="diffs")
     snapshot_before = relationship("Snapshot", foreign_keys=[snapshot_before_id])
     snapshot_after = relationship("Snapshot", foreign_keys=[snapshot_after_id])
-    change_event = relationship("ChangeEvent", back_populates="diff", uselist=False)
+    change_event = relationship("ChangeEvent", back_populates="diff", uselist=False, cascade="all, delete-orphan")
 
 
 class ChangeEvent(Base):
@@ -288,6 +308,67 @@ class Insight(Base):
 
     change_event = relationship("ChangeEvent", back_populates="insights")
     regenerated_from = relationship("Insight", remote_side="Insight.id")
+
+
+# ── Competitor Events (Multi-Signal) ──
+
+
+class CompetitorEvent(Base):
+    __tablename__ = "competitor_events"
+    __table_args__ = (
+        UniqueConstraint("competitor_id", "signal_type", "source_url", "title",
+                         name="uq_competitor_event_dedup"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
+    competitor_id = Column(UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=False)
+    signal_type = Column(
+        String(50), nullable=False,
+    )
+    title = Column(String(512), nullable=False)
+    description = Column(Text, nullable=True)
+    source_url = Column(Text, nullable=True)
+    event_time = Column(DateTime(timezone=True), server_default=func.now())
+    metadata_json = Column(JSONB, default={})
+    ai_summary = Column(Text, nullable=True)
+    ai_implications = Column(Text, nullable=True)
+    severity = Column(String(20), default="medium")
+    is_processed = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    workspace = relationship("Workspace", back_populates="competitor_events")
+    competitor = relationship("Competitor", back_populates="competitor_events")
+
+
+# ── Signal Sources ──
+
+
+class SignalSource(Base):
+    __tablename__ = "signal_sources"
+    __table_args__ = (
+        UniqueConstraint("competitor_id", "signal_type", "source_url",
+                         name="uq_signal_source_comp_type_url"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id"), nullable=False)
+    competitor_id = Column(UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=False)
+    signal_type = Column(String(50), nullable=False)
+    source_url = Column(Text, nullable=False)
+    source_label = Column(String(255), nullable=True)
+    is_active = Column(Boolean, default=True)
+    poll_interval_hours = Column(Integer, default=12)
+    last_checked_at = Column(DateTime(timezone=True), nullable=True)
+    last_success_at = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(Text, nullable=True)
+    source_kind = Column(String(50), default=SourceKind.MANUAL.value)
+    metadata_json = Column(JSONB, default={})
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    workspace = relationship("Workspace", back_populates="signal_sources")
+    competitor = relationship("Competitor", back_populates="signal_sources")
 
 
 # ── Billing ──

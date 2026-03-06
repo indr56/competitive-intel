@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models.models import (
     ChangeEvent,
     Competitor,
+    CompetitorEvent,
     Diff,
     Digest,
     User,
@@ -29,6 +30,26 @@ SEVERITY_WEIGHTS: Dict[str, int] = {
 }
 
 MAX_CHANGES_PER_DIGEST = 25
+MAX_SIGNAL_EVENTS_PER_DIGEST = 15
+
+SIGNAL_SEVERITY_WEIGHTS: Dict[str, int] = {
+    "critical": 100,
+    "high": 75,
+    "medium": 50,
+    "low": 25,
+}
+
+
+@dataclass
+class RankedSignalEvent:
+    event_id: str
+    competitor_name: str
+    signal_type: str
+    title: str
+    description: str
+    severity: str
+    source_url: str
+    rank_score: float
 
 
 @dataclass
@@ -139,6 +160,47 @@ def _aggregate_and_rank(
     return ranked[:MAX_CHANGES_PER_DIGEST]
 
 
+def _aggregate_signal_events(
+    db: Session,
+    workspace_id: str,
+    period_start: datetime,
+    period_end: datetime,
+) -> List[RankedSignalEvent]:
+    """
+    Gather competitor_events in the window, rank by severity weight,
+    cap at MAX_SIGNAL_EVENTS_PER_DIGEST.
+    """
+    events = (
+        db.query(CompetitorEvent)
+        .filter(
+            CompetitorEvent.workspace_id == workspace_id,
+            CompetitorEvent.created_at >= period_start,
+            CompetitorEvent.created_at <= period_end,
+        )
+        .all()
+    )
+
+    ranked: List[RankedSignalEvent] = []
+    for ev in events:
+        severity = ev.severity or "medium"
+        rank_score = float(SIGNAL_SEVERITY_WEIGHTS.get(severity, 50))
+        competitor = db.query(Competitor).filter(Competitor.id == ev.competitor_id).first()
+
+        ranked.append(RankedSignalEvent(
+            event_id=str(ev.id),
+            competitor_name=competitor.name if competitor else "Unknown",
+            signal_type=ev.signal_type,
+            title=ev.title,
+            description=ev.description or "",
+            severity=severity,
+            source_url=ev.source_url or "",
+            rank_score=rank_score,
+        ))
+
+    ranked.sort(key=lambda r: r.rank_score, reverse=True)
+    return ranked[:MAX_SIGNAL_EVENTS_PER_DIGEST]
+
+
 def build_weekly_digest(
     db: Session,
     workspace_id: str,
@@ -148,10 +210,11 @@ def build_weekly_digest(
     """
     Build a weekly digest for a workspace:
     1. Aggregate and rank change_events from the period window.
-    2. Load white-label theme.
-    3. Generate HTML + Markdown bodies.
-    4. Create Digest record.
-    5. Optionally send email to subscribed members.
+    2. Aggregate and rank competitor_events (signals) from the period window.
+    3. Load white-label theme.
+    4. Generate HTML + Markdown bodies.
+    5. Create Digest record.
+    6. Optionally send email to subscribed members.
     """
     now = datetime.now(timezone.utc)
     period_start = now - timedelta(days=period_days)
@@ -163,8 +226,10 @@ def build_weekly_digest(
         return None
 
     ranked = _aggregate_and_rank(db, workspace_id, period_start, period_end)
-    if not ranked:
-        logger.info("No change events for workspace %s in the past %d days", workspace_id, period_days)
+    signal_events = _aggregate_signal_events(db, workspace_id, period_start, period_end)
+
+    if not ranked and not signal_events:
+        logger.info("No events for workspace %s in the past %d days", workspace_id, period_days)
         return None
 
     theme = _get_theme(db, workspace_id)
@@ -191,6 +256,30 @@ def build_weekly_digest(
             "noise_score": rc.noise_score,
             "severity": rc.severity,
         })
+
+    # Add signal events to changes_data for template rendering
+    for se in signal_events:
+        changes_data.append({
+            "competitor_name": se.competitor_name,
+            "categories": [se.signal_type],
+            "severity": se.severity,
+            "ai_summary": se.title,
+            "ai_why_it_matters": se.description,
+            "ai_next_moves": "",
+            "rank_score": se.rank_score,
+            "impact_score": se.rank_score,
+            "signal_type": se.signal_type,
+            "source_url": se.source_url,
+        })
+        ranking_data.append({
+            "event_id": se.event_id,
+            "rank_score": se.rank_score,
+            "severity": se.severity,
+            "signal_type": se.signal_type,
+        })
+
+    # Re-sort combined data by rank_score
+    changes_data.sort(key=lambda x: x.get("rank_score", 0), reverse=True)
 
     # Generate bodies
     html = build_digest_html(workspace.name, period_label, changes_data, theme)

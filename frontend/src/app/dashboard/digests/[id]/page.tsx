@@ -100,43 +100,71 @@ export default function DigestDetailPage() {
         <div className="rounded-xl border bg-white overflow-hidden">
           <div className="px-5 py-3 border-b bg-gray-50">
             <h2 className="text-sm font-semibold text-gray-800">
-              Ranked Changes
+              Ranked Events
             </h2>
           </div>
           <div className="divide-y">
-            {digest.ranking_data.map((r, i) => (
-              <Link
-                key={r.change_event_id}
-                href={`/dashboard/changes/${r.change_event_id}`}
-                className="flex items-center justify-between px-5 py-3 hover:bg-gray-50 transition"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-bold text-gray-400 w-5">
-                    #{i + 1}
-                  </span>
-                  <span
-                    className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                      r.severity === "critical"
-                        ? "bg-red-50 text-red-700"
-                        : r.severity === "high"
-                        ? "bg-orange-50 text-orange-700"
-                        : r.severity === "medium"
-                        ? "bg-yellow-50 text-yellow-700"
-                        : "bg-green-50 text-green-700"
-                    }`}
-                  >
-                    {(r.severity ?? "medium").toUpperCase()}
-                  </span>
-                  <span className="text-xs text-gray-500 font-mono">
-                    {r.change_event_id.slice(0, 8)}...
-                  </span>
-                </div>
-                <div className="flex items-center gap-4 text-xs text-gray-400">
-                  <span>Score: {r.rank_score.toFixed(0)}</span>
-                  <span>Impact: {r.impact_score.toFixed(0)}</span>
-                </div>
-              </Link>
-            ))}
+            {digest.ranking_data.map((r, i) => {
+              const isSignalEvent = !!r.event_id && !r.change_event_id;
+              const entryId = r.change_event_id || r.event_id || `entry-${i}`;
+              const href = isSignalEvent
+                ? `/dashboard/activity/event/${r.event_id}`
+                : `/dashboard/changes/${r.change_event_id}`;
+
+              const SIGNAL_LABELS: Record<string, string> = {
+                blog_post: "Blog Post",
+                hiring: "Hiring",
+                funding: "Funding",
+                review: "Review",
+                marketing: "Marketing",
+              };
+
+              return (
+                <Link
+                  key={entryId}
+                  href={href}
+                  className="flex items-center justify-between px-5 py-3 hover:bg-gray-50 transition"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-bold text-gray-400 w-5">
+                      #{i + 1}
+                    </span>
+                    <span
+                      className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                        r.severity === "critical"
+                          ? "bg-red-50 text-red-700"
+                          : r.severity === "high"
+                          ? "bg-orange-50 text-orange-700"
+                          : r.severity === "medium"
+                          ? "bg-yellow-50 text-yellow-700"
+                          : "bg-green-50 text-green-700"
+                      }`}
+                    >
+                      {(r.severity ?? "medium").toUpperCase()}
+                    </span>
+                    {isSignalEvent && r.signal_type && (
+                      <span className="text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-full">
+                        {SIGNAL_LABELS[r.signal_type] || r.signal_type}
+                      </span>
+                    )}
+                    {!isSignalEvent && (
+                      <span className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded-full">
+                        Website Change
+                      </span>
+                    )}
+                    <span className="text-xs text-gray-500 font-mono">
+                      {entryId.slice(0, 8)}…
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-4 text-xs text-gray-400">
+                    <span>Score: {r.rank_score.toFixed(0)}</span>
+                    {r.impact_score != null && (
+                      <span>Impact: {r.impact_score.toFixed(0)}</span>
+                    )}
+                  </div>
+                </Link>
+              );
+            })}
           </div>
         </div>
       )}

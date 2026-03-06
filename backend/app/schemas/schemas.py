@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.models import PageType, Severity
+from app.models.models import PageType, Severity, SignalType
 
 
 # ── Mixins ──
@@ -251,6 +251,116 @@ class PaginatedResponse(BaseModel):
     total: int
     page: int
     page_size: int
+
+
+# ── Competitor Events (Multi-Signal) ──
+
+
+class CompetitorEventCreate(BaseModel):
+    signal_type: str
+    title: str
+    description: str | None = None
+    source_url: str | None = None
+    event_time: datetime | None = None
+    metadata_json: dict[str, Any] | None = None
+    severity: str = "medium"
+
+
+class CompetitorEventRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    competitor_id: uuid.UUID
+    signal_type: str
+    title: str
+    description: str | None
+    source_url: str | None
+    event_time: datetime
+    metadata_json: dict[str, Any] | None
+    ai_summary: str | None
+    ai_implications: str | None
+    severity: str
+    is_processed: bool
+    created_at: datetime
+
+
+class ActivityFeedItem(BaseModel):
+    """Unified feed item that can represent either a ChangeEvent or CompetitorEvent."""
+    id: str
+    source: str  # "change_event" or "competitor_event"
+    workspace_id: str
+    competitor_id: str
+    competitor_name: str | None = None
+    signal_type: str
+    title: str
+    description: str | None = None
+    severity: str | None = None
+    source_url: str | None = None
+    event_time: datetime
+    created_at: datetime
+
+
+# ── Signal Sources ──
+
+
+class SignalSourceCreate(BaseModel):
+    signal_type: str
+    source_url: str
+    source_label: str | None = None
+    is_active: bool = True
+    poll_interval_hours: int = 12
+    source_kind: str = "manual"
+    metadata_json: dict[str, Any] | None = None
+
+
+class SignalSourceUpdate(BaseModel):
+    source_url: str | None = None
+    source_label: str | None = None
+    is_active: bool | None = None
+    poll_interval_hours: int | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+class SignalSourceRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    competitor_id: uuid.UUID
+    signal_type: str
+    source_url: str
+    source_label: str | None
+    is_active: bool
+    poll_interval_hours: int
+    last_checked_at: datetime | None
+    last_success_at: datetime | None
+    last_error: str | None
+    source_kind: str
+    metadata_json: dict[str, Any] | None
+    created_at: datetime
+    updated_at: datetime | None
+
+
+class TestSourceResult(BaseModel):
+    status: str  # "valid", "unreachable", "unexpected_content", "no_items_found"
+    message: str
+    items_found: int = 0
+    details: dict[str, Any] | None = None
+
+
+class ScanResultItem(BaseModel):
+    signal_type: str
+    source_url: str | None = None
+    events_found: int = 0
+    events_created: int = 0
+    events_skipped_dedup: int = 0
+    error: str | None = None
+
+
+class ScanResult(BaseModel):
+    competitor_id: str
+    competitor_name: str
+    sources_scanned: int = 0
+    total_events_found: int = 0
+    total_events_created: int = 0
+    results: list[ScanResultItem] = []
 
 
 # ── Billing ──
