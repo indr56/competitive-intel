@@ -27,7 +27,23 @@ const SIGNAL_TYPES = [
   { value: "funding", label: "Funding / Press" },
   { value: "review", label: "Reviews" },
   { value: "marketing", label: "Marketing" },
+  { value: "positioning_change", label: "Positioning / Messaging" },
+  { value: "integration_added", label: "Integrations Added" },
+  { value: "integration_removed", label: "Integrations Removed" },
+  { value: "landing_page_created", label: "Landing Pages" },
 ];
+
+const SIGNAL_TYPE_LABELS: Record<string, string> = {
+  blog_post: "Blog Post",
+  hiring: "Hiring",
+  funding: "Funding",
+  review: "Review",
+  marketing: "Marketing",
+  positioning_change: "Positioning",
+  integration_added: "Integration Added",
+  integration_removed: "Integration Removed",
+  landing_page_created: "Landing Page",
+};
 
 const TEST_STATUS_ICON: Record<string, typeof CheckCircle> = {
   valid: CheckCircle,
@@ -227,8 +243,8 @@ export default function CompetitorDetailPage() {
           {scanResult.results.length > 0 && (
             <div className="space-y-1 mt-2">
               {scanResult.results.map((r, i) => (
-                <div key={i} className="flex items-center gap-2 text-xs">
-                  <span className="font-medium text-gray-700 w-20">{r.signal_type}</span>
+                <div key={i} className="flex items-center gap-3 text-xs">
+                  <span className="font-medium text-gray-700 w-44 shrink-0">{SIGNAL_TYPE_LABELS[r.signal_type] || r.signal_type}</span>
                   {r.error ? (
                     <span className="text-red-600">Error: {r.error}</span>
                   ) : (

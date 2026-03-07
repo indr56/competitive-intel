@@ -19,6 +19,10 @@ import {
   Plus,
   X,
   ChevronRight,
+  MessageSquare,
+  Plug,
+  PlugZap,
+  FileText,
 } from "lucide-react";
 
 const SIGNAL_META: Record<
@@ -73,6 +77,30 @@ const SIGNAL_META: Record<
     color: "text-indigo-600",
     bg: "bg-indigo-50",
   },
+  positioning_change: {
+    label: "Positioning",
+    icon: MessageSquare,
+    color: "text-cyan-600",
+    bg: "bg-cyan-50",
+  },
+  integration_added: {
+    label: "Integration Added",
+    icon: Plug,
+    color: "text-teal-600",
+    bg: "bg-teal-50",
+  },
+  integration_removed: {
+    label: "Integration Removed",
+    icon: PlugZap,
+    color: "text-rose-600",
+    bg: "bg-rose-50",
+  },
+  landing_page_created: {
+    label: "Landing Page",
+    icon: FileText,
+    color: "text-violet-600",
+    bg: "bg-violet-50",
+  },
 };
 
 const SEV_COLORS: Record<string, string> = {
@@ -92,6 +120,10 @@ const SIGNAL_FILTERS: { value: string; label: string }[] = [
   { value: "website_change", label: "Website Changes" },
   { value: "pricing_change", label: "Pricing Changes" },
   { value: "product_change", label: "Product Changes" },
+  { value: "positioning_change", label: "Positioning Changes" },
+  { value: "integration_added", label: "Integrations Added" },
+  { value: "integration_removed", label: "Integrations Removed" },
+  { value: "landing_page_created", label: "Landing Pages" },
 ];
 
 export default function ActivityFeedPage() {
