@@ -106,6 +106,8 @@ class TestSignalType:
         expected = {
             "website_change", "pricing_change", "product_change",
             "blog_post", "hiring", "funding", "review", "marketing",
+            "positioning_change", "integration_added", "integration_removed",
+            "landing_page_created",
         }
         actual = {t.value for t in SignalType}
         assert actual == expected
@@ -341,7 +343,7 @@ class TestEventsAPI:
         assert "hiring" in types
         assert "funding" in types
         assert "review" in types
-        assert len(types) == 8
+        assert len(types) == 12
 
 
 # ═══════════════════════════════════════════════

@@ -28,6 +28,9 @@ import type {
   SignalSource,
   TestSourceResult,
   ScanResult,
+  MonitoredPrompt,
+  PromptCluster,
+  ClusteringResult,
 } from "./types";
 
 export const API_URL =
@@ -360,6 +363,35 @@ export const billing = {
       `/api/workspaces/${workspaceId}/billing/sync`,
       { method: "POST" }
     ),
+};
+
+// ── Prompt Clustering ──
+
+export const promptClusters = {
+  listPrompts: (workspaceId: string, clusterId?: string) => {
+    const qs = clusterId ? `?cluster_id=${clusterId}` : "";
+    return request<MonitoredPrompt[]>(`/api/workspaces/${workspaceId}/prompts${qs}`);
+  },
+  createPrompt: (workspaceId: string, rawText: string) =>
+    request<MonitoredPrompt>(
+      `/api/workspaces/${workspaceId}/prompts`,
+      { method: "POST", body: JSON.stringify({ raw_text: rawText }) }
+    ),
+  deletePrompt: (promptId: string) =>
+    request<void>(`/api/prompts/${promptId}`, { method: "DELETE" }),
+  listClusters: (workspaceId: string) =>
+    request<PromptCluster[]>(`/api/workspaces/${workspaceId}/prompt-clusters`),
+  getCluster: (clusterId: string) =>
+    request<PromptCluster>(`/api/prompt-clusters/${clusterId}`),
+  runClustering: (workspaceId: string, threshold?: number) => {
+    const qs = threshold != null ? `?threshold=${threshold}` : "";
+    return request<ClusteringResult>(
+      `/api/workspaces/${workspaceId}/prompt-clusters/run${qs}`,
+      { method: "POST" }
+    );
+  },
+  deleteCluster: (clusterId: string) =>
+    request<void>(`/api/prompt-clusters/${clusterId}`, { method: "DELETE" }),
 };
 
 // ── Health ──

@@ -157,6 +157,7 @@ class ChangeEventRead(ORMBase):
     competitor_id: uuid.UUID
     categories: list[str]
     severity: Severity | None
+    signal_type: str | None = None
     ai_summary: str | None
     ai_why_it_matters: str | None
     ai_next_moves: str | None
@@ -445,3 +446,39 @@ class PaymentVerifyRequest(BaseModel):
 class PaymentVerifyResponse(BaseModel):
     verified: bool
     subscription_status: str
+
+
+# ── Prompt Clustering ──
+
+
+class MonitoredPromptCreate(BaseModel):
+    raw_text: str
+
+
+class MonitoredPromptRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    cluster_id: uuid.UUID | None
+    raw_text: str
+    normalized_text: str
+    is_active: bool
+    last_run_at: datetime | None
+    created_at: datetime
+
+
+class PromptClusterRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    cluster_topic: str
+    normalized_topic: str
+    description: str | None
+    created_at: datetime
+    updated_at: datetime | None
+    prompts: list[MonitoredPromptRead] = []
+
+
+class ClusteringResultRead(BaseModel):
+    clusters_created: int
+    clusters_updated: int
+    prompts_clustered: int
+    prompts_unclustered: int

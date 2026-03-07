@@ -19,6 +19,9 @@ from app.services.collectors.blog_collector import BlogCollector
 from app.services.collectors.hiring_collector import HiringCollector
 from app.services.collectors.funding_collector import FundingCollector
 from app.services.collectors.review_collector import ReviewCollector
+from app.services.collectors.positioning_collector import PositioningCollector
+from app.services.collectors.integration_collector import IntegrationAddedCollector, IntegrationRemovedCollector
+from app.services.collectors.landing_page_collector import LandingPageCollector
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +30,10 @@ COLLECTOR_MAP = {
     SignalType.HIRING.value: HiringCollector,
     SignalType.FUNDING.value: FundingCollector,
     SignalType.REVIEW.value: ReviewCollector,
+    SignalType.POSITIONING_CHANGE.value: PositioningCollector,
+    SignalType.INTEGRATION_ADDED.value: IntegrationAddedCollector,
+    SignalType.INTEGRATION_REMOVED.value: IntegrationRemovedCollector,
+    SignalType.LANDING_PAGE_CREATED.value: LandingPageCollector,
 }
 
 # Signal types that have collectors
@@ -206,6 +213,14 @@ def test_source(
         return _test_review_source(content, source_url)
     elif signal_type == SignalType.MARKETING.value:
         return _test_marketing_source(content, source_url)
+    elif signal_type == SignalType.POSITIONING_CHANGE.value:
+        return _test_positioning_source(content, source_url)
+    elif signal_type == SignalType.INTEGRATION_ADDED.value:
+        return _test_integration_source(content, source_url)
+    elif signal_type == SignalType.INTEGRATION_REMOVED.value:
+        return _test_integration_source(content, source_url)
+    elif signal_type == SignalType.LANDING_PAGE_CREATED.value:
+        return _test_landing_page_source(content, source_url)
     else:
         return TestSourceResult(
             status="valid",
@@ -385,4 +400,106 @@ def _test_marketing_source(content: str, url: str) -> TestSourceResult:
     return TestSourceResult(
         status="no_items_found",
         message="Page reachable but no marketing/comparison content detected",
+    )
+
+
+def _test_positioning_source(content: str, url: str) -> TestSourceResult:
+    """Test if URL has positioning/messaging content."""
+    lower = content.lower()
+    positioning_kw = [
+        "ai-powered", "all-in-one", "leading", "best-in-class",
+        "next-generation", "platform for", "built for", "designed for",
+        "transform", "reimagine", "future of", "the only",
+        "enterprise-grade", "trusted by", "powering",
+    ]
+    structural_kw = ["<h1", "<h2", "hero", "headline", "tagline"]
+
+    pos_hits = sum(1 for kw in positioning_kw if kw in lower)
+    struct_hits = sum(1 for kw in structural_kw if kw in lower)
+
+    if pos_hits >= 2 and struct_hits >= 1:
+        return TestSourceResult(
+            status="valid",
+            message=f"Positioning page detected: {pos_hits} messaging keywords, {struct_hits} structural elements",
+            items_found=pos_hits,
+            details={"positioning_keywords": pos_hits, "structural_elements": struct_hits},
+        )
+    elif pos_hits >= 1:
+        return TestSourceResult(
+            status="valid",
+            message=f"Possible positioning page: {pos_hits} messaging keyword(s)",
+            items_found=pos_hits,
+        )
+
+    return TestSourceResult(
+        status="no_items_found",
+        message="Page reachable but no positioning/messaging content detected",
+    )
+
+
+def _test_integration_source(content: str, url: str) -> TestSourceResult:
+    """Test if URL has integration/marketplace content."""
+    lower = content.lower()
+    integration_kw = [
+        "integration", "connect", "apps", "marketplace", "partner",
+        "plugin", "extension", "add-on", "connector", "ecosystem",
+        "works with", "compatible",
+    ]
+    known_names = [
+        "salesforce", "hubspot", "slack", "zapier", "openai",
+        "stripe", "shopify", "github", "jira",
+    ]
+
+    kw_hits = sum(1 for kw in integration_kw if kw in lower)
+    name_hits = sum(1 for n in known_names if n in lower)
+
+    if kw_hits >= 2 and name_hits >= 2:
+        return TestSourceResult(
+            status="valid",
+            message=f"Integrations page detected: {kw_hits} keywords, {name_hits} known integrations",
+            items_found=name_hits,
+            details={"integration_keywords": kw_hits, "known_integrations": name_hits},
+        )
+    elif kw_hits >= 1:
+        return TestSourceResult(
+            status="valid",
+            message=f"Possible integrations page: {kw_hits} keyword(s)",
+            items_found=kw_hits,
+        )
+
+    return TestSourceResult(
+        status="no_items_found",
+        message="Page reachable but no integration/marketplace content detected",
+    )
+
+
+def _test_landing_page_source(content: str, url: str) -> TestSourceResult:
+    """Test if URL is a strategic landing page."""
+    lower = content.lower()
+    cta_kw = [
+        "get started", "sign up", "book a demo", "start free",
+        "try for free", "request demo", "talk to sales", "contact us",
+        "learn more", "start trial",
+    ]
+    has_h1 = "<h1" in lower
+    cta_hits = sum(1 for kw in cta_kw if kw in lower)
+    content_length = len(lower)
+
+    if has_h1 and cta_hits >= 1 and content_length > 500:
+        return TestSourceResult(
+            status="valid",
+            message=f"Landing page detected: headline present, {cta_hits} CTA(s), {content_length} chars",
+            items_found=1,
+            details={"has_headline": has_h1, "cta_count": cta_hits, "content_length": content_length},
+        )
+    elif has_h1 or cta_hits >= 1:
+        return TestSourceResult(
+            status="valid",
+            message=f"Possible landing page: headline={has_h1}, CTAs={cta_hits}",
+            items_found=1,
+        )
+
+    return TestSourceResult(
+        status="no_items_found",
+        message="Page reachable but does not appear to be a strategic landing page",
     )

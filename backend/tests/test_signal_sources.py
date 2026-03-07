@@ -543,7 +543,7 @@ class TestRegression:
     def test_signal_types(self):
         resp = client.get("/api/events/signal-types")
         assert resp.status_code == 200
-        assert len(resp.json()) == 8
+        assert len(resp.json()) == 12
 
     def test_competitor_crud(self, workspace):
         resp = client.post(

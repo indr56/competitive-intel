@@ -88,6 +88,7 @@ export interface ChangeEvent {
   competitor_id: string;
   categories: string[];
   severity: Severity | null;
+  signal_type: string | null;
   ai_summary: string | null;
   ai_why_it_matters: string | null;
   ai_next_moves: string | null;
@@ -257,7 +258,11 @@ export type SignalType =
   | "hiring"
   | "funding"
   | "review"
-  | "marketing";
+  | "marketing"
+  | "positioning_change"
+  | "integration_added"
+  | "integration_removed"
+  | "landing_page_created";
 
 // ── Signal Sources ──
 
@@ -382,4 +387,35 @@ export interface PaymentVerifyRequest {
 export interface PaymentVerifyResponse {
   verified: boolean;
   subscription_status: string;
+}
+
+// ── Prompt Clustering ──
+
+export interface MonitoredPrompt {
+  id: string;
+  workspace_id: string;
+  cluster_id: string | null;
+  raw_text: string;
+  normalized_text: string;
+  is_active: boolean;
+  last_run_at: string | null;
+  created_at: string;
+}
+
+export interface PromptCluster {
+  id: string;
+  workspace_id: string;
+  cluster_topic: string;
+  normalized_topic: string;
+  description: string | null;
+  created_at: string;
+  updated_at: string | null;
+  prompts: MonitoredPrompt[];
+}
+
+export interface ClusteringResult {
+  clusters_created: number;
+  clusters_updated: number;
+  prompts_clustered: number;
+  prompts_unclustered: number;
 }

@@ -104,12 +104,19 @@ def _get_collector(name: str, db):
     from app.services.collectors.hiring_collector import HiringCollector
     from app.services.collectors.funding_collector import FundingCollector
     from app.services.collectors.review_collector import ReviewCollector
+    from app.services.collectors.positioning_collector import PositioningCollector
+    from app.services.collectors.integration_collector import IntegrationAddedCollector, IntegrationRemovedCollector
+    from app.services.collectors.landing_page_collector import LandingPageCollector
 
     collectors = {
         "blog": BlogCollector,
         "hiring": HiringCollector,
         "funding": FundingCollector,
         "review": ReviewCollector,
+        "positioning": PositioningCollector,
+        "integration_added": IntegrationAddedCollector,
+        "integration_removed": IntegrationRemovedCollector,
+        "landing_page": LandingPageCollector,
     }
     cls = collectors.get(name)
     if cls:
