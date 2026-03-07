@@ -476,6 +476,191 @@ class TestClusteringService:
 # ═══════════════════════════════════════════════
 
 
+# ═══════════════════════════════════════════════
+# 8. New Collectors Tests
+# ═══════════════════════════════════════════════
+
+
+class TestPositioningCollector:
+    """Test the positioning change collector."""
+
+    def test_extract_positioning_with_keywords(self):
+        from app.services.collectors.positioning_collector import PositioningCollector, _strip_html
+        from unittest.mock import MagicMock
+
+        db_mock = MagicMock()
+        collector = PositioningCollector(db_mock)
+        comp = MagicMock()
+        comp.name = "TestComp"
+
+        html = """
+        <html><body>
+        <div class="hero">
+            <h1>AI-powered workflow automation platform</h1>
+            <h2>Built for modern teams. Transform your business.</h2>
+        </div>
+        </body></html>
+        """
+        events = collector._extract_positioning(html, "https://test.com", comp)
+        assert len(events) >= 1
+        assert "positioning" in events[0]["title"].lower() or "Positioning" in events[0]["title"]
+
+    def test_no_positioning_on_empty_page(self):
+        from app.services.collectors.positioning_collector import PositioningCollector
+        from unittest.mock import MagicMock
+
+        db_mock = MagicMock()
+        collector = PositioningCollector(db_mock)
+        comp = MagicMock()
+        comp.name = "TestComp"
+
+        html = "<html><body><p>Nothing interesting here</p></body></html>"
+        events = collector._extract_positioning(html, "https://test.com", comp)
+        assert len(events) == 0
+
+
+class TestIntegrationCollectors:
+    """Test integration added/removed collectors."""
+
+    def test_detect_known_integrations(self):
+        from app.services.collectors.integration_collector import IntegrationAddedCollector
+        from unittest.mock import MagicMock
+
+        db_mock = MagicMock()
+        collector = IntegrationAddedCollector(db_mock)
+        comp = MagicMock()
+        comp.name = "TestComp"
+
+        html = """
+        <html><body>
+        <div class="integrations">
+            <div>Salesforce</div>
+            <div>Slack</div>
+            <div>HubSpot</div>
+            <div>Zapier</div>
+            <div>GitHub</div>
+        </div>
+        </body></html>
+        """
+        events = collector._extract_integrations(html, "https://test.com/integrations", comp)
+        assert len(events) >= 1
+        assert "integrations" in events[0]["title"].lower()
+        meta = events[0]["metadata_json"]
+        assert meta["count"] >= 5
+
+    def test_no_integrations_on_empty_page(self):
+        from app.services.collectors.integration_collector import IntegrationAddedCollector
+        from unittest.mock import MagicMock
+
+        db_mock = MagicMock()
+        collector = IntegrationAddedCollector(db_mock)
+        comp = MagicMock()
+        comp.name = "TestComp"
+
+        html = "<html><body><p>No integrations here</p></body></html>"
+        events = collector._extract_integrations(html, "https://test.com", comp)
+        assert len(events) == 0
+
+    def test_detect_removal_keywords(self):
+        from app.services.collectors.integration_collector import IntegrationRemovedCollector
+        from unittest.mock import MagicMock
+
+        db_mock = MagicMock()
+        collector = IntegrationRemovedCollector(db_mock)
+        comp = MagicMock()
+        comp.name = "TestComp"
+
+        html = """
+        <html><body>
+        <div class="notice">
+            The legacy API integration has been deprecated and will be removed.
+            Migration required for all users.
+        </div>
+        </body></html>
+        """
+        events = collector._extract_removals(html, "https://test.com/integrations", comp)
+        assert len(events) >= 1
+        assert "deprecation" in events[0]["title"].lower()
+
+
+class TestLandingPageCollector:
+    """Test landing page discovery collector."""
+
+    def test_detect_strategic_landing_page(self):
+        from app.services.collectors.landing_page_collector import LandingPageCollector
+        from unittest.mock import MagicMock
+
+        db_mock = MagicMock()
+        collector = LandingPageCollector(db_mock)
+        comp = MagicMock()
+        comp.name = "TestComp"
+
+        html = """
+        <html><head><title>AI Automation - TestComp</title></head>
+        <body>
+        <h1>Supercharge your workflows with AI</h1>
+        <p>Our platform helps teams automate repetitive tasks.</p>
+        <a href="/signup">Get Started Free</a>
+        <a href="/demo">Book a Demo</a>
+        """ + ("x" * 500) + """
+        </body></html>
+        """
+        events = collector._analyze_page(html, "https://test.com/ai-automation", comp)
+        assert len(events) >= 1
+        assert "landing page" in events[0]["title"].lower()
+
+    def test_ignore_blog_path(self):
+        from app.services.collectors.landing_page_collector import LandingPageCollector
+        from unittest.mock import MagicMock
+
+        db_mock = MagicMock()
+        collector = LandingPageCollector(db_mock)
+        comp = MagicMock()
+        comp.name = "TestComp"
+
+        html = "<html><body><h1>Blog Post</h1><a>Get Started</a>" + ("x" * 600) + "</body></html>"
+        events = collector._analyze_page(html, "https://test.com/blog/some-post", comp)
+        assert len(events) == 0
+
+    def test_ignore_root_path(self):
+        from app.services.collectors.landing_page_collector import LandingPageCollector
+        from unittest.mock import MagicMock
+
+        db_mock = MagicMock()
+        collector = LandingPageCollector(db_mock)
+        comp = MagicMock()
+        comp.name = "TestComp"
+
+        html = "<html><body><h1>Home</h1><a>Get Started</a>" + ("x" * 600) + "</body></html>"
+        events = collector._analyze_page(html, "https://test.com/", comp)
+        assert len(events) == 0
+
+
+class TestScanServiceNewTypes:
+    """Test that scan service now includes the new signal types."""
+
+    def test_collector_map_has_new_types(self):
+        from app.services.scan_service import COLLECTOR_MAP, SCANNABLE_TYPES
+        assert "positioning_change" in SCANNABLE_TYPES
+        assert "integration_added" in SCANNABLE_TYPES
+        assert "integration_removed" in SCANNABLE_TYPES
+        assert "landing_page_created" in SCANNABLE_TYPES
+        assert len(COLLECTOR_MAP) == 8  # 4 original + 4 new
+
+    def test_scan_competitor_includes_new_types(self, workspace, competitor):
+        """Scan should now include all 8 scannable types."""
+        resp = client.post(f"/api/competitors/{competitor.id}/scan")
+        assert resp.status_code == 200
+        data = resp.json()
+        scanned_types = [r["signal_type"] for r in data["results"]]
+        # All 8 should be scanned
+        for st in ["review", "blog_post", "hiring", "funding",
+                    "positioning_change", "integration_added",
+                    "integration_removed", "landing_page_created"]:
+            assert st in scanned_types, f"{st} missing from scan results"
+        assert data["sources_scanned"] == 8
+
+
 class TestRegression:
     """Ensure existing endpoints still work."""
 
