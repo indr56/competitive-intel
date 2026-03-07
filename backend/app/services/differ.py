@@ -89,9 +89,13 @@ CATEGORY_WEIGHTS: dict[str, int] = {
     "pricing_change": 15,
     "plan_restructure": 12,
     "positioning_hero": 10,
+    "positioning_change": 12,
     "cta_change": 8,
     "feature_claim": 8,
     "new_alternatives_content": 10,
+    "integration_added": 10,
+    "integration_removed": 12,
+    "landing_page_created": 10,
     "other": 3,
 }
 

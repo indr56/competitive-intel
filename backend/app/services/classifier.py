@@ -37,7 +37,66 @@ KEYWORD_RULES: dict[ChangeCategory, list[str]] = {
         "vs ", "versus", "alternative to", "compared to", "competitor",
         "switch from", "migrate from", "better than",
     ],
+    ChangeCategory.POSITIONING_CHANGE: [
+        "ai-powered", "platform for", "automation platform", "next-generation",
+        "world's first", "fastest", "most powerful", "reimagined",
+    ],
+    ChangeCategory.INTEGRATION_ADDED: [
+        "new integration", "now integrates", "connect with", "works with",
+        "marketplace", "app store", "partner",
+    ],
+    ChangeCategory.INTEGRATION_REMOVED: [
+        "removed integration", "no longer supports", "discontinued",
+        "deprecated integration",
+    ],
+    ChangeCategory.LANDING_PAGE_CREATED: [
+        "/ai", "/automation", "/enterprise", "/use-cases",
+        "/solutions", "/platform", "/product",
+    ],
 }
+
+# URL patterns for landing page detection
+LANDING_PAGE_FOCUS_PATTERNS = [
+    "/ai", "/automation", "/enterprise", "/use-cases",
+    "/solutions", "/platform", "/product", "/security",
+    "/compliance", "/analytics", "/workflow",
+]
+LANDING_PAGE_IGNORE_PATTERNS = [
+    "/blog/", "/docs/", "/help/", "/support/",
+    "/careers/", "/jobs/", "/legal/", "/privacy",
+    "/terms", "/sitemap", "/feed", "/rss",
+]
+
+
+# ── Signal type derivation from categories ──
+
+CATEGORY_TO_SIGNAL: dict[str, str] = {
+    "pricing_change": "pricing_change",
+    "plan_restructure": "pricing_change",
+    "positioning_hero": "positioning_change",
+    "positioning_change": "positioning_change",
+    "cta_change": "website_change",
+    "feature_claim": "product_change",
+    "new_alternatives_content": "website_change",
+    "integration_added": "integration_added",
+    "integration_removed": "integration_removed",
+    "landing_page_created": "landing_page_created",
+    "other": "website_change",
+}
+
+
+def derive_signal_type(categories: list[str]) -> str:
+    """Derive the primary signal_type from a list of change categories."""
+    priority = [
+        "positioning_change", "pricing_change", "integration_added",
+        "integration_removed", "landing_page_created", "plan_restructure",
+        "feature_claim", "positioning_hero", "cta_change",
+        "new_alternatives_content", "other",
+    ]
+    for cat in priority:
+        if cat in categories:
+            return CATEGORY_TO_SIGNAL.get(cat, "website_change")
+    return "website_change"
 
 
 @dataclass
@@ -64,13 +123,25 @@ def classify_with_rules(diff_result: DiffResult, page_type: PageType) -> list[Ch
                 matched.append(category)
                 break
 
-    # Page type heuristic: pricing page changes are very likely pricing-related
+    # Page type heuristics
     if page_type == PageType.PRICING and ChangeCategory.PRICING_CHANGE not in matched:
         matched.append(ChangeCategory.PRICING_CHANGE)
-    if page_type == PageType.HOME_HERO and ChangeCategory.POSITIONING_HERO not in matched:
-        matched.append(ChangeCategory.POSITIONING_HERO)
+    if page_type == PageType.HOME_HERO:
+        if ChangeCategory.POSITIONING_HERO not in matched:
+            matched.append(ChangeCategory.POSITIONING_HERO)
+        if ChangeCategory.POSITIONING_CHANGE not in matched:
+            matched.append(ChangeCategory.POSITIONING_CHANGE)
     if page_type == PageType.ALTERNATIVES and ChangeCategory.NEW_ALTERNATIVES_CONTENT not in matched:
         matched.append(ChangeCategory.NEW_ALTERNATIVES_CONTENT)
+    if page_type == PageType.INTEGRATIONS:
+        if ChangeCategory.INTEGRATION_ADDED not in matched and ChangeCategory.INTEGRATION_REMOVED not in matched:
+            if diff_result.additions:
+                matched.append(ChangeCategory.INTEGRATION_ADDED)
+            if diff_result.removals:
+                matched.append(ChangeCategory.INTEGRATION_REMOVED)
+    if page_type == PageType.LANDING:
+        if ChangeCategory.POSITIONING_CHANGE not in matched:
+            matched.append(ChangeCategory.POSITIONING_CHANGE)
 
     if not matched:
         matched.append(ChangeCategory.OTHER)
@@ -111,6 +182,21 @@ def classify_change(
 {diff_summary}
 
 Rule-based categories detected: {[c.value for c in rule_categories]}
+
+Available categories:
+- pricing_change: pricing/cost changes
+- plan_restructure: plan tier changes
+- positioning_hero: hero headline/tagline changes
+- positioning_change: strategic messaging/copy changes (headlines, subheadlines, feature descriptions, NOT layout)
+- cta_change: call-to-action changes
+- feature_claim: new feature announcements
+- new_alternatives_content: competitor comparison content
+- integration_added: new integrations or partnerships added
+- integration_removed: integrations removed or deprecated
+- landing_page_created: new strategic landing page detected
+- other: doesn't fit above
+
+IMPORTANT: Distinguish between UI/layout changes (classify as "other" with low severity) and semantic messaging changes (classify as "positioning_change" or relevant category).
 
 Respond in JSON with these exact keys:
 {{

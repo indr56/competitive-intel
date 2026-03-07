@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.models import ChangeEvent, Diff, Snapshot, TrackedPage
 from app.services.snapshot_service import take_snapshot
 from app.services.differ import compute_diff, compute_impact_score
-from app.services.classifier import classify_change
+from app.services.classifier import classify_change, derive_signal_type
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +125,7 @@ def run_pipeline_sync(tracked_page_id: str, db: Session) -> Dict[str, Any]:
         competitor_id=competitor_id,
         categories=classification.categories,
         severity=classification.severity,
+        signal_type=derive_signal_type(classification.categories),
         ai_summary=classification.ai_summary,
         ai_why_it_matters=classification.ai_why_it_matters,
         ai_next_moves=classification.ai_next_moves,

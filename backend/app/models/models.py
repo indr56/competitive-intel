@@ -51,6 +51,10 @@ class ChangeCategory(str, enum.Enum):
     CTA_CHANGE = "cta_change"
     FEATURE_CLAIM = "feature_claim"
     NEW_ALTERNATIVES_CONTENT = "new_alternatives_content"
+    POSITIONING_CHANGE = "positioning_change"
+    INTEGRATION_ADDED = "integration_added"
+    INTEGRATION_REMOVED = "integration_removed"
+    LANDING_PAGE_CREATED = "landing_page_created"
     OTHER = "other"
 
 
@@ -70,6 +74,10 @@ class SignalType(str, enum.Enum):
     FUNDING = "funding"
     REVIEW = "review"
     MARKETING = "marketing"
+    POSITIONING_CHANGE = "positioning_change"
+    INTEGRATION_ADDED = "integration_added"
+    INTEGRATION_REMOVED = "integration_removed"
+    LANDING_PAGE_CREATED = "landing_page_created"
 
 
 class SourceKind(str, enum.Enum):
@@ -211,6 +219,7 @@ class ChangeEvent(Base):
     ai_battlecard_block = Column(Text, nullable=True)
     ai_sales_talk_track = Column(Text, nullable=True)
     raw_llm_response = Column(JSONB, nullable=True)
+    signal_type = Column(String(50), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     diff = relationship("Diff", back_populates="change_event")
@@ -398,6 +407,42 @@ class WorkspaceBilling(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     workspace = relationship("Workspace", back_populates="billing")
+
+
+# ── Prompt Clustering ──
+
+
+class PromptCluster(Base):
+    __tablename__ = "prompt_clusters"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    cluster_topic = Column(String(255), nullable=False)
+    normalized_topic = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    prompts = relationship("MonitoredPrompt", back_populates="cluster", cascade="all, delete-orphan")
+
+
+class MonitoredPrompt(Base):
+    __tablename__ = "monitored_prompts"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "raw_text", name="uq_monitored_prompt_ws_text"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    cluster_id = Column(UUID(as_uuid=True), ForeignKey("prompt_clusters.id", ondelete="SET NULL"), nullable=True)
+    raw_text = Column(Text, nullable=False)
+    normalized_text = Column(String(512), nullable=False)
+    embedding = Column(JSONB, nullable=True)
+    is_active = Column(Boolean, default=True)
+    last_run_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    cluster = relationship("PromptCluster", back_populates="prompts")
 
 
 class WebhookEvent(Base):

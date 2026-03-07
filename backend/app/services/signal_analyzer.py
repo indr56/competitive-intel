@@ -20,6 +20,10 @@ SIGNAL_TYPE_LABELS = {
     "funding": "Funding Signal",
     "review": "Review Signal",
     "marketing": "Marketing Signal",
+    "positioning_change": "Positioning Change",
+    "integration_added": "Integration Added",
+    "integration_removed": "Integration Removed",
+    "landing_page_created": "Landing Page Created",
 }
 
 
