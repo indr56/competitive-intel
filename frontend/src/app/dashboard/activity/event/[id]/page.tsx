@@ -19,6 +19,10 @@ import {
   TrendingUp,
   RefreshCw,
   Loader2,
+  MessageSquare,
+  Plug,
+  PlugZap,
+  FileText,
 } from "lucide-react";
 import { events as eventsApi, competitors as compApi } from "@/lib/api";
 import type { CompetitorEvent, Competitor } from "@/lib/types";
@@ -42,6 +46,10 @@ const SIGNAL_META: Record<
   funding: { label: "Funding", icon: TrendingUp, color: "text-pink-600", bg: "bg-pink-50" },
   review: { label: "Review", icon: Star, color: "text-yellow-600", bg: "bg-yellow-50" },
   marketing: { label: "Marketing", icon: Megaphone, color: "text-indigo-600", bg: "bg-indigo-50" },
+  positioning_change: { label: "Positioning", icon: MessageSquare, color: "text-cyan-600", bg: "bg-cyan-50" },
+  integration_added: { label: "Integration Added", icon: Plug, color: "text-teal-600", bg: "bg-teal-50" },
+  integration_removed: { label: "Integration Removed", icon: PlugZap, color: "text-rose-600", bg: "bg-rose-50" },
+  landing_page_created: { label: "Landing Page", icon: FileText, color: "text-violet-600", bg: "bg-violet-50" },
 };
 
 export default function EventDetailPage() {

@@ -117,6 +117,10 @@ export default function DigestDetailPage() {
                 funding: "Funding",
                 review: "Review",
                 marketing: "Marketing",
+                positioning_change: "Positioning",
+                integration_added: "Integration Added",
+                integration_removed: "Integration Removed",
+                landing_page_created: "Landing Page",
               };
 
               return (

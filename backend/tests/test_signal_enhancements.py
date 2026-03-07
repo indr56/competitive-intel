@@ -661,6 +661,39 @@ class TestScanServiceNewTypes:
         assert data["sources_scanned"] == 8
 
 
+class TestSignalTypeLabels:
+    """Verify all signal types have human-readable labels everywhere."""
+
+    def test_signal_analyzer_labels_cover_all_types(self):
+        from app.services.signal_analyzer import SIGNAL_TYPE_LABELS
+        from app.models.models import SignalType
+        for st in SignalType:
+            assert st.value in SIGNAL_TYPE_LABELS, f"Missing label for {st.value}"
+
+    def test_new_events_have_correct_signal_type_in_feed(self, workspace, competitor):
+        """Events created with new signal types should appear with correct type in feed."""
+        # Create an event with positioning_change
+        resp = client.post(
+            f"/api/workspaces/{workspace.id}/competitors/{competitor.id}/events",
+            json={"signal_type": "positioning_change", "title": "Label test positioning", "severity": "medium"},
+        )
+        assert resp.status_code == 201
+
+        # Verify it appears in the activity feed with correct signal_type
+        feed_resp = client.get(f"/api/workspaces/{workspace.id}/activity?signal_type=positioning_change")
+        assert feed_resp.status_code == 200
+        items = feed_resp.json()
+        matching = [i for i in items if i["title"] == "Label test positioning"]
+        assert len(matching) >= 1
+        assert matching[0]["signal_type"] == "positioning_change"
+
+    def test_activity_feed_filter_by_new_types(self, workspace, competitor):
+        """Activity feed should support filtering by new signal types."""
+        for st in ["integration_added", "integration_removed", "landing_page_created"]:
+            resp = client.get(f"/api/workspaces/{workspace.id}/activity?signal_type={st}")
+            assert resp.status_code == 200
+
+
 class TestRegression:
     """Ensure existing endpoints still work."""
 
