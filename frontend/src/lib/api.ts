@@ -31,6 +31,14 @@ import type {
   MonitoredPrompt,
   PromptCluster,
   ClusteringResult,
+  AIKeyword,
+  AIPromptSource,
+  AITrackedPrompt,
+  AIVisibilityEvent,
+  AIImpactInsight,
+  VisibilityTrendsData,
+  PromptLimits,
+  RunPromptsResponse,
 } from "./types";
 
 export const API_URL =
@@ -392,6 +400,100 @@ export const promptClusters = {
   },
   deleteCluster: (clusterId: string) =>
     request<void>(`/api/prompt-clusters/${clusterId}`, { method: "DELETE" }),
+};
+
+// ── AI Visibility Intelligence ──
+
+export const aiVisibility = {
+  // Keywords
+  listKeywords: (wsId: string, source?: string) => {
+    const qs = source ? `?source=${source}` : "";
+    return request<AIKeyword[]>(`/api/workspaces/${wsId}/ai-visibility/keywords${qs}`);
+  },
+  addKeyword: (wsId: string, keyword: string, source = "user") =>
+    request<AIKeyword>(`/api/workspaces/${wsId}/ai-visibility/keywords`, {
+      method: "POST", body: JSON.stringify({ keyword, source }),
+    }),
+  approveKeywords: (wsId: string, ids: string[]) =>
+    request<AIKeyword[]>(`/api/workspaces/${wsId}/ai-visibility/keywords/approve`, {
+      method: "POST", body: JSON.stringify(ids),
+    }),
+  deleteKeyword: (wsId: string, kwId: string) =>
+    request<void>(`/api/workspaces/${wsId}/ai-visibility/keywords/${kwId}`, { method: "DELETE" }),
+  extractKeywords: (wsId: string) =>
+    request<{ keywords_extracted: number; keywords_created: number }>(`/api/workspaces/${wsId}/ai-visibility/keywords/extract`, { method: "POST" }),
+
+  // Suggestions
+  listSuggestions: (wsId: string, sourceType?: string, status?: string) => {
+    const qs = new URLSearchParams();
+    if (sourceType) qs.set("source_type", sourceType);
+    if (status) qs.set("status", status);
+    const q = qs.toString();
+    return request<AIPromptSource[]>(`/api/workspaces/${wsId}/ai-visibility/suggestions${q ? `?${q}` : ""}`);
+  },
+  addSuggestion: (wsId: string, promptText: string, sourceType = "manual") =>
+    request<AIPromptSource>(`/api/workspaces/${wsId}/ai-visibility/suggestions`, {
+      method: "POST", body: JSON.stringify({ prompt_text: promptText, source_type: sourceType }),
+    }),
+  generateSuggestions: (wsId: string, sourceTypes?: string[]) =>
+    request<{ suggestions_created: number; by_source: Record<string, number> }>(`/api/workspaces/${wsId}/ai-visibility/suggestions/generate`, {
+      method: "POST", body: JSON.stringify(sourceTypes ? { source_types: sourceTypes } : {}),
+    }),
+  approveSuggestions: (wsId: string, ids: string[]) =>
+    request<AITrackedPrompt[]>(`/api/workspaces/${wsId}/ai-visibility/suggestions/approve`, {
+      method: "POST", body: JSON.stringify({ prompt_source_ids: ids }),
+    }),
+  rejectSuggestions: (wsId: string, ids: string[]) =>
+    request<{ rejected: number }>(`/api/workspaces/${wsId}/ai-visibility/suggestions/reject`, {
+      method: "POST", body: JSON.stringify({ prompt_source_ids: ids }),
+    }),
+
+  // Tracked Prompts
+  listPrompts: (wsId: string, activeOnly = false) =>
+    request<AITrackedPrompt[]>(`/api/workspaces/${wsId}/ai-visibility/prompts${activeOnly ? "?active_only=true" : ""}`),
+  pausePrompt: (wsId: string, promptId: string) =>
+    request<{ id: string; is_active: boolean }>(`/api/workspaces/${wsId}/ai-visibility/prompts/${promptId}/pause`, { method: "POST" }),
+  deletePrompt: (wsId: string, promptId: string) =>
+    request<void>(`/api/workspaces/${wsId}/ai-visibility/prompts/${promptId}`, { method: "DELETE" }),
+  getPromptLimits: (wsId: string) =>
+    request<PromptLimits>(`/api/workspaces/${wsId}/ai-visibility/prompts/limits`),
+
+  // Execution
+  runAllPrompts: (wsId: string, force = true) =>
+    request<RunPromptsResponse>(`/api/workspaces/${wsId}/ai-visibility/prompts/run?force=${force}`, { method: "POST" }),
+  runSinglePrompt: (wsId: string, promptId: string, force = true) =>
+    request<RunPromptsResponse>(`/api/workspaces/${wsId}/ai-visibility/prompts/${promptId}/run?force=${force}`, { method: "POST" }),
+
+  // Visibility
+  listEvents: (wsId: string, competitorId?: string, engine?: string) => {
+    const qs = new URLSearchParams();
+    if (competitorId) qs.set("competitor_id", competitorId);
+    if (engine) qs.set("engine", engine);
+    const q = qs.toString();
+    return request<AIVisibilityEvent[]>(`/api/workspaces/${wsId}/ai-visibility/events${q ? `?${q}` : ""}`);
+  },
+  filterResults: (wsId: string) =>
+    request<{ events_created: number }>(`/api/workspaces/${wsId}/ai-visibility/filter`, { method: "POST" }),
+
+  // Trends
+  getTrends: (wsId: string, competitorId?: string, days = 30, engine?: string) => {
+    const qs = new URLSearchParams();
+    if (competitorId) qs.set("competitor_id", competitorId);
+    qs.set("days", String(days));
+    if (engine) qs.set("engine", engine);
+    return request<VisibilityTrendsData>(`/api/workspaces/${wsId}/ai-visibility/trends?${qs.toString()}`);
+  },
+
+  // Impact Insights
+  listInsights: (wsId: string, competitorId?: string, priority?: string) => {
+    const qs = new URLSearchParams();
+    if (competitorId) qs.set("competitor_id", competitorId);
+    if (priority) qs.set("priority", priority);
+    const q = qs.toString();
+    return request<AIImpactInsight[]>(`/api/workspaces/${wsId}/ai-visibility/insights${q ? `?${q}` : ""}`);
+  },
+  runCorrelation: (wsId: string, days = 7) =>
+    request<{ insights_created: number }>(`/api/workspaces/${wsId}/ai-visibility/insights/correlate?days=${days}`, { method: "POST" }),
 };
 
 // ── Health ──

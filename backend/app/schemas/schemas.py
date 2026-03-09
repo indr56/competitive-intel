@@ -373,6 +373,7 @@ class PlanLimits(BaseModel):
     min_check_interval_hours: int
     white_label: bool
     max_workspaces: int
+    max_tracked_prompts: int = 10
 
 
 class IntervalPricing(BaseModel):
@@ -482,3 +483,159 @@ class ClusteringResultRead(BaseModel):
     clusters_updated: int
     prompts_clustered: int
     prompts_unclustered: int
+
+
+# ── AI Visibility Intelligence ──
+
+
+class AIKeywordCreate(BaseModel):
+    keyword: str
+    source: str = "user"
+
+
+class AIKeywordRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    keyword: str
+    source: str
+    is_approved: bool
+    extracted_from: str | None
+    created_at: datetime
+
+
+class AIPromptSourceCreate(BaseModel):
+    prompt_text: str
+    source_type: str = "manual"
+    source_detail: dict[str, Any] | None = None
+
+
+class AIPromptSourceRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    prompt_text: str
+    source_type: str
+    source_detail: dict[str, Any] | None
+    status: str
+    created_at: datetime
+    updated_at: datetime | None
+
+
+class AIPromptApproveRequest(BaseModel):
+    prompt_source_ids: list[uuid.UUID]
+
+
+class AIPromptRejectRequest(BaseModel):
+    prompt_source_ids: list[uuid.UUID]
+
+
+class AITrackedPromptRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    prompt_text: str
+    normalized_text: str
+    source_type: str
+    cluster_id: uuid.UUID | None
+    is_active: bool
+    last_run_at: datetime | None
+    created_at: datetime
+
+
+class AIPromptClusterRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    cluster_topic: str
+    description: str | None
+    created_at: datetime
+    tracked_prompts: list[AITrackedPromptRead] = []
+
+
+class AIPromptRunRead(ORMBase):
+    id: uuid.UUID
+    prompt_text: str
+    normalized_text: str
+    run_date: datetime
+    status: str
+    started_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+
+
+class AIEngineResultRead(ORMBase):
+    id: uuid.UUID
+    prompt_run_id: uuid.UUID
+    engine: str
+    raw_response: str | None
+    mentioned_brands: list[str]
+    ranking_data: list[dict[str, Any]] | None
+    citations: list[str]
+    status: str
+    error_message: str | None
+    executed_at: datetime | None
+    created_at: datetime
+
+
+class AIVisibilityEventRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    competitor_id: uuid.UUID
+    tracked_prompt_id: uuid.UUID
+    engine_result_id: uuid.UUID
+    engine: str
+    mentioned: bool
+    rank_position: int | None
+    citation_url: str | None
+    event_date: datetime
+    created_at: datetime
+
+
+class AIImpactInsightRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    competitor_id: uuid.UUID
+    signal_event_id: str | None
+    signal_type: str | None
+    signal_title: str | None
+    prompt_text: str | None
+    tracked_prompt_id: uuid.UUID | None
+    visibility_before: int
+    visibility_after: int
+    engines_affected: list[str]
+    citations: list[str]
+    impact_score: float | None
+    priority_level: str
+    explanation: str | None
+    created_at: datetime
+
+
+class VisibilityTrendPoint(BaseModel):
+    date: str
+    engine: str
+    mentions: int
+    avg_rank: float | None
+
+
+class VisibilityTrendsResponse(BaseModel):
+    competitor_id: str
+    competitor_name: str
+    trends: list[VisibilityTrendPoint]
+    total_mentions: int
+    engines_breakdown: dict[str, int]
+
+
+class GenerateSuggestionsRequest(BaseModel):
+    source_types: list[str] | None = None  # filter which sources to generate from
+
+
+class GenerateSuggestionsResponse(BaseModel):
+    suggestions_created: int
+    by_source: dict[str, int]
+
+
+class RunPromptsRequest(BaseModel):
+    prompt_ids: list[uuid.UUID] | None = None  # if None, run all active
+
+
+class RunPromptsResponse(BaseModel):
+    prompts_queued: int
+    cached_reused: int
+    message: str
