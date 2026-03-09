@@ -285,10 +285,28 @@ class TestCorrelationEngine:
         score = _compute_impact_score(0, 0, 0)
         assert score == 0.0
 
+    def test_compute_impact_score_zero_delta(self):
+        score = _compute_impact_score(3, 3, 2)
+        assert score == 0.0
+
     def test_compute_impact_score_increase(self):
-        score = _compute_impact_score(5, 10, 3)
+        score = _compute_impact_score(5, 10, 3, "pricing_change", 0)
         assert score > 0
         assert score <= 100
+
+    def test_compute_impact_score_first_detection(self):
+        score = _compute_impact_score(0, 2, 2, "blog_post", 0)
+        assert 0 < score <= 50  # First detection capped at 50
+
+    def test_compute_impact_score_varies_by_signal_type(self):
+        score_pricing = _compute_impact_score(2, 5, 2, "pricing_change", 0)
+        score_hiring = _compute_impact_score(2, 5, 2, "hiring", 0)
+        assert score_pricing > score_hiring  # pricing_change weighs more
+
+    def test_compute_impact_score_recency_bonus(self):
+        score_recent = _compute_impact_score(2, 5, 2, "blog_post", 0)
+        score_old = _compute_impact_score(2, 5, 2, "blog_post", 10)
+        assert score_recent > score_old  # Recent signals score higher
 
     def test_compute_priority_p0(self):
         assert _compute_priority(80) == "P0"
@@ -962,3 +980,213 @@ class TestFullPipeline:
         res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/prompts/limits")
         assert res.status_code == 200
         assert res.json()["used"] == 1
+
+
+# ═══════════════════════════════════════════════
+# 22. Correlation Engine — Date Normalization & Deduplication Tests
+# ═══════════════════════════════════════════════
+
+
+class TestCorrelationEngineE2E:
+    """
+    Tests the correlation engine fixes:
+    - Date normalization (same-day signal & events go into correct buckets)
+    - Top N limiting (max 5 per competitor×prompt)
+    - Varied scores (different signal types produce different scores)
+    - Re-run clears stale insights
+    """
+
+    def test_same_day_signals_produce_first_detection_insights(self, db, workspace, competitor, billing):
+        """
+        When signals and visibility events are on the same day,
+        events should land in 'after' bucket (first detection: before=0, after>0).
+        """
+        ws_id = str(workspace.id)
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # Create a tracked prompt + visibility event for today
+        tp = AITrackedPrompt(
+            workspace_id=workspace.id,
+            prompt_text="best crm tools test",
+            normalized_text=normalize_prompt("best crm tools test"),
+            source_type="manual",
+            is_active=True,
+        )
+        db.add(tp)
+        db.flush()
+
+        # Run globally to get engine results
+        run = run_prompt_globally(db, "best crm tools test", today)
+        db.commit()
+
+        # Filter to create visibility events
+        filter_results_for_workspace(db, ws_id, today)
+        db.commit()
+
+        # Create a competitor signal for today
+        from app.models.models import CompetitorEvent
+        ce = CompetitorEvent(
+            workspace_id=workspace.id,
+            competitor_id=competitor.id,
+            signal_type="pricing_change",
+            title="HubSpot raised prices",
+            source_url="https://hubspot.com/pricing",
+            severity="high",
+        )
+        db.add(ce)
+        db.commit()
+
+        # Run correlation
+        res = client.post(f"/api/workspaces/{ws_id}/ai-visibility/insights/correlate?days=7")
+        assert res.status_code == 200
+        data = res.json()
+
+        # Check insights
+        insights_res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/insights")
+        insights = insights_res.json()
+
+        if len(insights) > 0:
+            for ins in insights:
+                # With date normalization, same-day events should be in 'after' bucket
+                # So before=0, after>0 (first detection) — NOT before>0, after=0
+                assert ins["visibility_before"] == 0, \
+                    f"Expected before=0 (first detection) but got {ins['visibility_before']}"
+                assert ins["visibility_after"] > 0, \
+                    f"Expected after>0 but got {ins['visibility_after']}"
+                # First detection score capped at 50
+                assert ins["impact_score"] <= 50.0, \
+                    f"First detection score should be ≤50, got {ins['impact_score']}"
+
+    def test_insights_limited_per_competitor_prompt(self, db, workspace, competitor, billing):
+        """Max 5 insights per competitor × prompt combination."""
+        ws_id = str(workspace.id)
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        tp = AITrackedPrompt(
+            workspace_id=workspace.id,
+            prompt_text="best crm 2026",
+            normalized_text=normalize_prompt("best crm 2026"),
+            source_type="manual",
+            is_active=True,
+        )
+        db.add(tp)
+        db.flush()
+
+        run = run_prompt_globally(db, "best crm 2026", today)
+        db.commit()
+        filter_results_for_workspace(db, ws_id, today)
+        db.commit()
+
+        # Create 10 signals (more than MAX_INSIGHTS_PER_COMP_PROMPT = 5)
+        from app.models.models import CompetitorEvent
+        for i in range(10):
+            ce = CompetitorEvent(
+                workspace_id=workspace.id,
+                competitor_id=competitor.id,
+                signal_type=["pricing_change", "blog_post", "hiring", "funding", "feature_release",
+                             "positioning_change", "integration_added", "website_change",
+                             "landing_page_created", "acquisition"][i],
+                title=f"Signal {i}: test signal",
+                source_url=f"https://hubspot.com/signal-{i}",
+                severity="medium",
+            )
+            db.add(ce)
+        db.commit()
+
+        res = client.post(f"/api/workspaces/{ws_id}/ai-visibility/insights/correlate?days=7")
+        assert res.status_code == 200
+
+        insights_res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/insights")
+        insights = insights_res.json()
+
+        # Should be at most 5 (MAX_INSIGHTS_PER_COMP_PROMPT)
+        assert len(insights) <= 5, \
+            f"Expected max 5 insights per comp×prompt but got {len(insights)}"
+
+    def test_rerun_clears_stale_insights(self, db, workspace, competitor, billing):
+        """Running correlation again should clear old insights and recompute."""
+        ws_id = str(workspace.id)
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        tp = AITrackedPrompt(
+            workspace_id=workspace.id,
+            prompt_text="best crm rerun test",
+            normalized_text=normalize_prompt("best crm rerun test"),
+            source_type="manual",
+            is_active=True,
+        )
+        db.add(tp)
+        db.flush()
+        run = run_prompt_globally(db, "best crm rerun test", today)
+        db.commit()
+        filter_results_for_workspace(db, ws_id, today)
+        db.commit()
+
+        from app.models.models import CompetitorEvent
+        ce = CompetitorEvent(
+            workspace_id=workspace.id,
+            competitor_id=competitor.id,
+            signal_type="funding",
+            title="HubSpot Series Z",
+            source_url="https://hubspot.com/funding",
+            severity="high",
+        )
+        db.add(ce)
+        db.commit()
+
+        # First run
+        res1 = client.post(f"/api/workspaces/{ws_id}/ai-visibility/insights/correlate?days=7")
+        count1 = res1.json()["insights_created"]
+
+        # Second run — should clear and recompute (same count)
+        res2 = client.post(f"/api/workspaces/{ws_id}/ai-visibility/insights/correlate?days=7")
+        count2 = res2.json()["insights_created"]
+
+        assert count1 == count2, "Re-run should produce same count (not accumulate)"
+
+    def test_varied_scores_by_signal_type(self, db, workspace, competitor, billing):
+        """Different signal types should produce different impact scores."""
+        ws_id = str(workspace.id)
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        tp = AITrackedPrompt(
+            workspace_id=workspace.id,
+            prompt_text="best crm varied test",
+            normalized_text=normalize_prompt("best crm varied test"),
+            source_type="manual",
+            is_active=True,
+        )
+        db.add(tp)
+        db.flush()
+        run = run_prompt_globally(db, "best crm varied test", today)
+        db.commit()
+        filter_results_for_workspace(db, ws_id, today)
+        db.commit()
+
+        # Create signals of different types
+        from app.models.models import CompetitorEvent
+        for sig_type in ["pricing_change", "hiring"]:
+            ce = CompetitorEvent(
+                workspace_id=workspace.id,
+                competitor_id=competitor.id,
+                signal_type=sig_type,
+                title=f"Test {sig_type}",
+                source_url=f"https://hubspot.com/{sig_type}",
+                severity="medium",
+            )
+            db.add(ce)
+        db.commit()
+
+        res = client.post(f"/api/workspaces/{ws_id}/ai-visibility/insights/correlate?days=7")
+        insights_res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/insights")
+        insights = insights_res.json()
+
+        if len(insights) >= 2:
+            scores = [i["impact_score"] for i in insights]
+            types = [i["signal_type"] for i in insights]
+            # pricing_change (weight 1.5) and hiring (weight 0.7) should produce different scores
+            pricing_scores = [s for s, t in zip(scores, types) if t == "pricing_change"]
+            hiring_scores = [s for s, t in zip(scores, types) if t == "hiring"]
+            if pricing_scores and hiring_scores:
+                assert pricing_scores[0] > hiring_scores[0], \
+                    f"pricing_change ({pricing_scores[0]}) should score higher than hiring ({hiring_scores[0]})"
