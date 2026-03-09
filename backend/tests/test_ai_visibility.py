@@ -67,7 +67,11 @@ from app.services.ai_visibility.workspace_filtering import (
 from app.services.ai_visibility.correlation_engine import (
     _compute_impact_score,
     _compute_priority,
+    _compute_correlation_confidence,
+    _generate_short_title,
+    _generate_reasoning,
 )
+from app.models.models import InsightType
 
 # ── Test DB setup ──
 
@@ -322,6 +326,129 @@ class TestCorrelationEngine:
 
     def test_compute_priority_p2(self):
         assert _compute_priority(20) == "P2"
+
+    def test_compute_priority_p3(self):
+        assert _compute_priority(10) == "P3"
+        assert _compute_priority(5) == "P3"
+
+    def test_compute_priority_boundaries(self):
+        assert _compute_priority(70) == "P0"
+        assert _compute_priority(69.9) == "P1"
+        assert _compute_priority(40) == "P1"
+        assert _compute_priority(39.9) == "P2"
+        assert _compute_priority(15) == "P2"
+        assert _compute_priority(14.9) == "P3"
+
+
+class TestCorrelationConfidence:
+    def test_confidence_baseline(self):
+        score = _compute_correlation_confidence(5, "website_change", 1, 1)
+        assert 0 <= score <= 100
+
+    def test_confidence_recent_signal_higher(self):
+        recent = _compute_correlation_confidence(0, "pricing_change", 3, 2)
+        old = _compute_correlation_confidence(10, "pricing_change", 3, 2)
+        assert recent > old
+
+    def test_confidence_more_engines_higher(self):
+        one = _compute_correlation_confidence(1, "blog_post", 1, 1)
+        four = _compute_correlation_confidence(1, "blog_post", 4, 1)
+        assert four > one
+
+    def test_confidence_larger_delta_higher(self):
+        small = _compute_correlation_confidence(1, "blog_post", 2, 1)
+        large = _compute_correlation_confidence(1, "blog_post", 2, 5)
+        assert large > small
+
+    def test_confidence_important_signal_higher(self):
+        pricing = _compute_correlation_confidence(1, "pricing_change", 2, 2)
+        hiring = _compute_correlation_confidence(1, "hiring", 2, 2)
+        assert pricing > hiring
+
+    def test_confidence_clamped_0_100(self):
+        score = _compute_correlation_confidence(0, "pricing_change", 10, 100)
+        assert score <= 100
+        score2 = _compute_correlation_confidence(100, "website_change", 0, 0)
+        assert score2 >= 0
+
+
+class TestShortTitleGeneration:
+    def test_hijack_title(self):
+        title = _generate_short_title(
+            InsightType.AI_VISIBILITY_HIJACK.value, "Cursor AI", None, None,
+        )
+        assert "Cursor AI" in title
+        assert "New in AI" in title
+
+    def test_loss_title(self):
+        title = _generate_short_title(
+            InsightType.AI_VISIBILITY_LOSS.value, "Acme", None, None,
+        )
+        assert "Lost from AI" in title
+
+    def test_dominance_title(self):
+        title = _generate_short_title(
+            InsightType.AI_DOMINANCE.value, "BigCo", None, None,
+        )
+        assert "Dominance" in title
+
+    def test_ai_impact_with_signal_title(self):
+        title = _generate_short_title(
+            InsightType.AI_IMPACT.value, "Acme", "pricing_change", "Acme drops price 50%",
+        )
+        assert title == "Acme drops price 50%"
+
+    def test_ai_impact_long_signal_falls_back(self):
+        long_title = "A" * 100
+        title = _generate_short_title(
+            InsightType.AI_IMPACT.value, "Acme", "funding", long_title,
+        )
+        assert "Funding" in title
+        assert "Acme" in title
+
+
+class TestReasoningGeneration:
+    def test_hijack_reasoning(self):
+        r = _generate_reasoning(
+            InsightType.AI_VISIBILITY_HIJACK.value, "Cursor AI",
+            "", "", "best AI code editors", ["chatgpt", "perplexity"],
+            2, None,
+        )
+        assert "newly detected" in r
+        assert "Cursor AI" in r
+
+    def test_loss_reasoning(self):
+        r = _generate_reasoning(
+            InsightType.AI_VISIBILITY_LOSS.value, "Acme",
+            "", "", "best CRM tools", ["claude"], -1, "CRM Tools",
+        )
+        assert "disappeared" in r
+        assert "CRM Tools" in r
+
+    def test_dominance_reasoning(self):
+        r = _generate_reasoning(
+            InsightType.AI_DOMINANCE.value, "BigCo",
+            "", "", "best project management", ["chatgpt", "claude", "perplexity", "gemini"],
+            4, None,
+        )
+        assert "all queried AI engines" in r
+
+    def test_impact_reasoning_positive_delta(self):
+        r = _generate_reasoning(
+            InsightType.AI_IMPACT.value, "Acme",
+            "pricing_change", "Acme raises prices", "best CRM",
+            ["chatgpt"], 2, None,
+        )
+        assert "improved" in r
+        assert "pricing change" in r
+
+    def test_impact_reasoning_negative_delta(self):
+        r = _generate_reasoning(
+            InsightType.AI_IMPACT.value, "Acme",
+            "funding", "Acme Series B", "best CRM",
+            ["chatgpt"], -1, None,
+        )
+        assert "reduced" in r
 
 
 # ═══════════════════════════════════════════════
@@ -1051,8 +1178,11 @@ class TestCorrelationEngineE2E:
         insights_res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/insights")
         insights = insights_res.json()
 
-        if len(insights) > 0:
-            for ins in insights:
+        # Filter to only signal-correlated insights (Type 1: ai_impact)
+        # Types 2-4 (hijack/loss/dominance) have different visibility semantics
+        ai_impact_insights = [i for i in insights if i.get("insight_type") == "ai_impact"]
+        if len(ai_impact_insights) > 0:
+            for ins in ai_impact_insights:
                 # With date normalization, same-day events should be in 'after' bucket
                 # So before=0, after>0 (first detection) — NOT before>0, after=0
                 assert ins["visibility_before"] == 0, \
@@ -1105,9 +1235,11 @@ class TestCorrelationEngineE2E:
         insights_res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/insights")
         insights = insights_res.json()
 
-        # Should be at most 5 (MAX_INSIGHTS_PER_COMP_PROMPT)
-        assert len(insights) <= 5, \
-            f"Expected max 5 insights per comp×prompt but got {len(insights)}"
+        # Type 1 (ai_impact) should be at most 5 (MAX_INSIGHTS_PER_COMP_PROMPT)
+        # Types 2-4 (hijack/loss/dominance) are signal-independent and not limited
+        ai_impact_insights = [i for i in insights if i.get("insight_type") == "ai_impact"]
+        assert len(ai_impact_insights) <= 5, \
+            f"Expected max 5 ai_impact insights per comp×prompt but got {len(ai_impact_insights)}"
 
     def test_rerun_clears_stale_insights(self, db, workspace, competitor, billing):
         """Running correlation again should clear old insights and recompute."""

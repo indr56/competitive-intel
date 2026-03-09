@@ -605,6 +605,81 @@ class AIImpactInsightRead(ORMBase):
     priority_level: str
     explanation: str | None
     created_at: datetime
+    # PROMPT-9 additions
+    insight_type: str = "ai_impact"
+    short_title: str | None = None
+    correlation_confidence: float | None = None
+    reasoning: str | None = None
+    engine_breakdown: dict[str, Any] | None = None
+    previous_mentions: list[str] = []
+    current_mentions: list[str] = []
+    prompt_cluster_name: str | None = None
+    signal_timestamp: datetime | None = None
+    visibility_delta: int | None = None
+
+
+class AIInsightCompactRead(BaseModel):
+    """Level 1 — Compact Insight Card for feed/dashboard."""
+    insight_id: uuid.UUID
+    insight_type: str
+    priority: str
+    competitor_name: str
+    signal_type: str | None
+    short_title: str | None
+    visibility_before: int
+    visibility_after: int
+    visibility_delta: int
+    engine_summary: str
+    impact_score: float | None
+    correlation_confidence: float | None
+    summary_text: str | None
+    timestamp: datetime
+
+
+class AIInsightDetailRead(BaseModel):
+    """Level 2 — Expanded Insight Detail (full intelligence context)."""
+    # A. Header
+    insight_id: uuid.UUID
+    insight_type: str
+    competitor_name: str
+    competitor_id: uuid.UUID
+    priority: str
+    impact_score: float | None
+    correlation_confidence: float | None
+    signal_type: str | None
+    timestamp: datetime
+
+    # B. Signal Context
+    signal_title: str | None
+    signal_timestamp: datetime | None
+    signal_event_id: str | None
+
+    # C. Prompt Context
+    prompt_text: str | None
+    prompt_cluster_name: str | None
+    prompt_source: str | None
+    prompt_run_timestamp: datetime | None
+
+    # D. Visibility Change
+    visibility_before: int
+    visibility_after: int
+    visibility_delta: int
+    engines_detected: list[str]
+    engine_breakdown: dict[str, Any] | None
+
+    # E. Citations
+    citations: dict[str, list[str]]  # engine_name -> [urls]
+
+    # F. Reasoning
+    reasoning: str | None
+    explanation: str | None
+
+    # G. Supporting Evidence
+    previous_mentions: list[str]
+    current_mentions: list[str]
+
+    # H. Actions (links)
+    actions: dict[str, str]
 
 
 class VisibilityTrendPoint(BaseModel):

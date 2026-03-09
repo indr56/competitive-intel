@@ -39,6 +39,8 @@ from app.models.models import (
 from app.schemas.schemas import (
     AIEngineResultRead,
     AIImpactInsightRead,
+    AIInsightCompactRead,
+    AIInsightDetailRead,
     AIKeywordCreate,
     AIKeywordRead,
     AIPromptApproveRequest,
@@ -585,6 +587,7 @@ def list_insights(
     workspace_id: uuid.UUID,
     competitor_id: uuid.UUID | None = None,
     priority: str | None = None,
+    insight_type: str | None = None,
     limit: int = Query(default=50, le=200),
     db: Session = Depends(get_db),
 ):
@@ -594,7 +597,150 @@ def list_insights(
         q = q.filter(AIImpactInsight.competitor_id == competitor_id)
     if priority:
         q = q.filter(AIImpactInsight.priority_level == priority)
+    if insight_type:
+        q = q.filter(AIImpactInsight.insight_type == insight_type)
     return q.order_by(AIImpactInsight.created_at.desc()).limit(limit).all()
+
+
+@router.get(
+    "/api/workspaces/{workspace_id}/ai-visibility/insights/compact",
+    response_model=list[AIInsightCompactRead],
+)
+def list_insights_compact(
+    workspace_id: uuid.UUID,
+    competitor_id: uuid.UUID | None = None,
+    priority: str | None = None,
+    insight_type: str | None = None,
+    limit: int = Query(default=50, le=200),
+    db: Session = Depends(get_db),
+):
+    """Return compact insight cards for the feed view."""
+    _check_ws(db, workspace_id)
+    q = db.query(AIImpactInsight).filter(AIImpactInsight.workspace_id == workspace_id)
+    if competitor_id:
+        q = q.filter(AIImpactInsight.competitor_id == competitor_id)
+    if priority:
+        q = q.filter(AIImpactInsight.priority_level == priority)
+    if insight_type:
+        q = q.filter(AIImpactInsight.insight_type == insight_type)
+    rows = q.order_by(AIImpactInsight.created_at.desc()).limit(limit).all()
+
+    # Build comp name lookup
+    comp_ids = {r.competitor_id for r in rows}
+    comps = db.query(Competitor).filter(Competitor.id.in_(comp_ids)).all() if comp_ids else []
+    comp_map = {str(c.id): c.name for c in comps}
+
+    cards = []
+    for r in rows:
+        delta = (r.visibility_delta if r.visibility_delta is not None
+                 else r.visibility_after - r.visibility_before)
+        engines = r.engines_affected or []
+        engine_summary = ", ".join(engines) if engines else "none"
+        cards.append(AIInsightCompactRead(
+            insight_id=r.id,
+            insight_type=r.insight_type or "ai_impact",
+            priority=r.priority_level,
+            competitor_name=comp_map.get(str(r.competitor_id), "Unknown"),
+            signal_type=r.signal_type,
+            short_title=r.short_title,
+            visibility_before=r.visibility_before,
+            visibility_after=r.visibility_after,
+            visibility_delta=delta,
+            engine_summary=engine_summary,
+            impact_score=r.impact_score,
+            correlation_confidence=r.correlation_confidence,
+            summary_text=r.explanation,
+            timestamp=r.created_at,
+        ))
+    return cards
+
+
+@router.get(
+    "/api/workspaces/{workspace_id}/ai-visibility/insights/{insight_id}",
+    response_model=AIInsightDetailRead,
+)
+def get_insight_detail(
+    workspace_id: uuid.UUID,
+    insight_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    """Return expanded insight detail for a single insight."""
+    _check_ws(db, workspace_id)
+    r = (
+        db.query(AIImpactInsight)
+        .filter(
+            AIImpactInsight.id == insight_id,
+            AIImpactInsight.workspace_id == workspace_id,
+        )
+        .first()
+    )
+    if not r:
+        raise HTTPException(404, "Insight not found")
+
+    comp = db.query(Competitor).filter(Competitor.id == r.competitor_id).first()
+    comp_name = comp.name if comp else "Unknown"
+
+    delta = (r.visibility_delta if r.visibility_delta is not None
+             else r.visibility_after - r.visibility_before)
+
+    # Prompt context
+    prompt_source = None
+    prompt_run_timestamp = None
+    if r.tracked_prompt_id:
+        tp = db.query(AITrackedPrompt).filter(AITrackedPrompt.id == r.tracked_prompt_id).first()
+        if tp:
+            prompt_source = tp.source_type
+            prompt_run_timestamp = tp.last_run_at
+
+    # Citations by engine
+    citations_by_engine: dict[str, list[str]] = {}
+    if r.citations:
+        for url in r.citations:
+            citations_by_engine.setdefault("all", []).append(url)
+    if r.engine_breakdown:
+        for eng, data in r.engine_breakdown.items():
+            cu = data.get("citation_url")
+            if cu:
+                citations_by_engine.setdefault(eng, []).append(cu)
+
+    # Actions
+    ws = str(workspace_id)
+    actions = {
+        "view_signal": f"/dashboard/activity-feed?signal_id={r.signal_event_id}" if r.signal_event_id else "",
+        "view_prompt_analytics": f"/dashboard/ai-visibility/trends?prompt_id={r.tracked_prompt_id}" if r.tracked_prompt_id else "",
+        "view_competitor_timeline": f"/dashboard/competitors/{r.competitor_id}",
+        "rerun_prompt": f"/api/workspaces/{ws}/ai-visibility/prompts/{r.tracked_prompt_id}/run?force=true" if r.tracked_prompt_id else "",
+    }
+
+    return AIInsightDetailRead(
+        insight_id=r.id,
+        insight_type=r.insight_type or "ai_impact",
+        competitor_name=comp_name,
+        competitor_id=r.competitor_id,
+        priority=r.priority_level,
+        impact_score=r.impact_score,
+        correlation_confidence=r.correlation_confidence,
+        signal_type=r.signal_type,
+        timestamp=r.created_at,
+        signal_title=r.signal_title,
+        signal_timestamp=r.signal_timestamp,
+        signal_event_id=r.signal_event_id,
+        prompt_text=r.prompt_text,
+        prompt_cluster_name=r.prompt_cluster_name,
+        prompt_source=prompt_source,
+        prompt_run_timestamp=prompt_run_timestamp,
+        visibility_before=r.visibility_before,
+        visibility_after=r.visibility_after,
+        visibility_delta=delta,
+        engines_detected=r.engines_affected or [],
+        engine_breakdown=r.engine_breakdown,
+        citations=citations_by_engine,
+        reasoning=r.reasoning,
+        explanation=r.explanation,
+        previous_mentions=r.previous_mentions or [],
+        current_mentions=r.current_mentions or [],
+        actions=actions,
+    )
 
 
 @router.post(
