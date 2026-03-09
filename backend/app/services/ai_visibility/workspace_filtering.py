@@ -10,6 +10,7 @@ After global prompt execution, this service:
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -39,6 +40,46 @@ def _brand_matches(competitor_name: str, mentioned_brands: list[str]) -> tuple[b
         if comp_lower == brand_lower or comp_lower in brand_lower or brand_lower in comp_lower:
             return True, i + 1
     return False, None
+
+
+def _brand_in_raw_response(competitor_name: str, raw_response: str | None) -> tuple[bool, int | None]:
+    """
+    Fallback: search raw_response text for competitor name mentions.
+    Returns (matched, rank_position or None).
+    """
+    if not raw_response or not competitor_name:
+        return False, None
+
+    comp_lower = competitor_name.lower().strip()
+    if len(comp_lower) < 2:  # Skip very short names to avoid false positives
+        return False, None
+
+    resp_lower = raw_response.lower()
+    if comp_lower not in resp_lower:
+        return False, None
+
+    # Try to determine rank position from numbered list
+    for line in raw_response.split('\n'):
+        line_stripped = line.strip()
+        m = re.match(r'^(\d+)[.)\s]', line_stripped)
+        if m and comp_lower in line_stripped.lower():
+            return True, int(m.group(1))
+
+    # Found in text but no rank position
+    return True, None
+
+
+def _normalize_domain(domain: str) -> str:
+    """Strip protocol and trailing slashes from a domain for comparison."""
+    d = domain.lower().strip()
+    for prefix in ("https://", "http://"):
+        if d.startswith(prefix):
+            d = d[len(prefix):]
+    d = d.rstrip("/")
+    # Also strip www.
+    if d.startswith("www."):
+        d = d[4:]
+    return d
 
 
 def filter_results_for_workspace(
@@ -103,11 +144,12 @@ def filter_results_for_workspace(
         )
 
         for er in engine_results:
-            if not er.mentioned_brands:
-                continue
-
             for comp in competitors:
-                matched, rank_pos = _brand_matches(comp.name, er.mentioned_brands)
+                # Primary: check parsed mentioned_brands list
+                matched, rank_pos = _brand_matches(comp.name, er.mentioned_brands or [])
+                # Fallback: search raw_response text
+                if not matched:
+                    matched, rank_pos = _brand_in_raw_response(comp.name, er.raw_response)
                 if not matched:
                     continue
 
@@ -125,12 +167,15 @@ def filter_results_for_workspace(
                 if existing:
                     continue
 
-                # Find citation URL if available
+                # Find citation URL if available (normalize domains)
                 citation_url = None
-                if er.citations:
-                    comp_domain = comp.domain.lower() if comp.domain else ""
+                if er.citations and comp.domain:
+                    comp_domain_norm = _normalize_domain(comp.domain)
                     for c in er.citations:
-                        if comp_domain and comp_domain in c.lower():
+                        c_norm = _normalize_domain(c)
+                        if comp_domain_norm and (
+                            comp_domain_norm in c_norm or c_norm in comp_domain_norm
+                        ):
                             citation_url = c
                             break
 

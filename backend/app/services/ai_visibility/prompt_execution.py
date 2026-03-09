@@ -22,6 +22,8 @@ from app.models.models import (
     AIEngineResult,
     AIPromptRun,
     AITrackedPrompt,
+    AIVisibilityEvent,
+    Competitor,
     RunStatusEnum,
 )
 
@@ -151,7 +153,11 @@ def execute_prompt_on_engine(
     try:
         # --- Simulated AI engine response ---
         # In production, replace with actual API calls
-        raw_response = _simulate_engine_response(prompt_run.prompt_text, engine)
+        # Query all competitor names globally (not per-workspace) to make
+        # simulation realistic — real AI engines would mention real brands.
+        all_comps = db.query(Competitor.name).distinct().all()
+        known_brands = [c[0] for c in all_comps if c[0]]
+        raw_response = _simulate_engine_response(prompt_run.prompt_text, engine, known_brands)
 
         brands, ranking_data, citations = _parse_brands_from_response(raw_response)
 
@@ -172,10 +178,18 @@ def execute_prompt_on_engine(
     return result
 
 
-def _simulate_engine_response(prompt_text: str, engine: str) -> str:
+def _simulate_engine_response(
+    prompt_text: str,
+    engine: str,
+    known_brands: list[str] | None = None,
+) -> str:
     """
     Simulate an AI engine response for development/testing.
     Returns a realistic-looking response with brand mentions.
+
+    known_brands: real competitor names from the DB (global, not per-workspace).
+    These are injected into the response so workspace filtering can find matches.
+    In production (real API calls), this parameter is unused.
     """
     import hashlib
     # Deterministic but varied response based on prompt + engine
@@ -192,7 +206,7 @@ def _simulate_engine_response(prompt_text: str, engine: str) -> str:
         "Datadog", "Snowflake", "Databricks", "Vercel", "Netlify",
     ]
 
-    # Select 5-8 brands deterministically
+    # Select 5-8 brands deterministically (unchanged from original)
     n_brands = 5 + (seed_int % 4)
     selected = []
     for i in range(n_brands):
@@ -207,6 +221,22 @@ def _simulate_engine_response(prompt_text: str, engine: str) -> str:
         if brand.lower() in prompt_lower and brand not in selected:
             selected.insert(0, brand)
             break
+
+    # Inject real competitor brands from DB so filtering can find matches.
+    # Deterministically pick 1-3 known brands and insert at varied positions.
+    if known_brands:
+        n_inject = 1 + (seed_int % min(3, len(known_brands)))
+        for i in range(n_inject):
+            kb = known_brands[(seed_int + i * 3) % len(known_brands)]
+            if kb and kb not in selected:
+                insert_pos = min((seed_int + i) % 4, len(selected))
+                selected.insert(insert_pos, kb)
+        # Also check if prompt mentions a known brand by name
+        for kb in known_brands:
+            if kb and kb.lower() in prompt_lower and kb not in selected:
+                selected.insert(0, kb)
+                break
+        selected = selected[:8]  # Cap at 8
 
     lines = [f"Here are the top {engine} recommendations:\n"]
     for i, brand in enumerate(selected, 1):
@@ -258,9 +288,11 @@ def run_workspace_prompts(
     db: Session,
     workspace_id: str,
     prompt_ids: Optional[List[str]] = None,
+    force: bool = False,
 ) -> dict:
     """
     Run prompts for a workspace. Leverages global execution with caching.
+    If force=True, clear cached results and re-execute.
     Returns summary of what was executed vs cached.
     """
     query = (
@@ -290,6 +322,27 @@ def run_workspace_prompts(
             )
             .first()
         )
+
+        if existing and force:
+            # Clear stale cache: delete visibility events, engine results, reset run
+            engine_result_ids = [
+                er.id for er in db.query(AIEngineResult).filter(
+                    AIEngineResult.prompt_run_id == existing.id
+                ).all()
+            ]
+            if engine_result_ids:
+                db.query(AIVisibilityEvent).filter(
+                    AIVisibilityEvent.engine_result_id.in_(engine_result_ids)
+                ).delete(synchronize_session=False)
+                db.query(AIEngineResult).filter(
+                    AIEngineResult.prompt_run_id == existing.id
+                ).delete(synchronize_session=False)
+            existing.status = RunStatusEnum.PENDING.value
+            existing.started_at = None
+            existing.completed_at = None
+            db.flush()
+            existing = None  # Fall through to re-execute
+
         if existing:
             cached += 1
             tp.last_run_at = datetime.now(timezone.utc)

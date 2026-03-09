@@ -462,13 +462,15 @@ def get_prompt_limits(
 )
 def run_prompts(
     workspace_id: uuid.UUID,
+    force: bool = False,
     body: RunPromptsRequest | None = None,
     db: Session = Depends(get_db),
 ):
-    """Run prompts (manual trigger). Uses global cache."""
+    """Run prompts (manual trigger). Uses global cache. force=true clears cache."""
     _check_ws(db, workspace_id)
     prompt_ids = [str(pid) for pid in body.prompt_ids] if body and body.prompt_ids else None
-    result = run_workspace_prompts(db, str(workspace_id), prompt_ids)
+    result = run_workspace_prompts(db, str(workspace_id), prompt_ids, force=force)
+    filter_results_for_workspace(db, str(workspace_id))
     return RunPromptsResponse(**result)
 
 
@@ -479,12 +481,12 @@ def run_prompts(
 def run_single_prompt(
     workspace_id: uuid.UUID,
     prompt_id: uuid.UUID,
+    force: bool = False,
     db: Session = Depends(get_db),
 ):
-    """Run a single prompt (Run Now button)."""
+    """Run a single prompt (Run Now button). force=true clears cache."""
     _check_ws(db, workspace_id)
-    result = run_workspace_prompts(db, str(workspace_id), [str(prompt_id)])
-    # After execution, filter results for this workspace
+    result = run_workspace_prompts(db, str(workspace_id), [str(prompt_id)], force=force)
     filter_results_for_workspace(db, str(workspace_id))
     return RunPromptsResponse(**result)
 

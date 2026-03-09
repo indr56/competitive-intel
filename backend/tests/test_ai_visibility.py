@@ -697,6 +697,192 @@ class TestPromptRunsAPI:
 # ═══════════════════════════════════════════════
 
 
+# ═══════════════════════════════════════════════
+# 16. Simulator — Real Brand Injection Tests
+# ═══════════════════════════════════════════════
+
+
+class TestSimulatorBrandInjection:
+    """Verify simulator includes real competitor names from the DB."""
+
+    def test_simulator_includes_known_brands(self):
+        from app.services.ai_visibility.prompt_execution import _simulate_engine_response
+        resp = _simulate_engine_response(
+            "best coding tools", "chatgpt", known_brands=["Cursor", "Peec AI"]
+        )
+        resp_lower = resp.lower()
+        # At least one of the known brands should appear
+        assert "cursor" in resp_lower or "peec ai" in resp_lower
+
+    def test_simulator_without_known_brands_unchanged(self):
+        from app.services.ai_visibility.prompt_execution import _simulate_engine_response
+        resp1 = _simulate_engine_response("best crm tools", "chatgpt", known_brands=None)
+        resp2 = _simulate_engine_response("best crm tools", "chatgpt", known_brands=[])
+        # Without known brands, behaviour is deterministic and identical
+        assert resp1 == resp2
+
+    def test_run_prompt_globally_includes_competitor_brands(self, db, workspace, competitor):
+        """After running globally, engine results should mention workspace competitor."""
+        from app.services.ai_visibility.prompt_execution import run_prompt_globally
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        run = run_prompt_globally(db, "best crm alternatives to compare", today)
+        db.commit()
+        # At least one engine should mention the competitor name
+        all_brands = []
+        all_raw = ""
+        for er in run.engine_results:
+            all_brands.extend(er.mentioned_brands or [])
+            all_raw += (er.raw_response or "").lower()
+        assert "hubspot" in [b.lower() for b in all_brands] or "hubspot" in all_raw
+
+
+# ═══════════════════════════════════════════════
+# 17. Raw Response Fallback Tests
+# ═══════════════════════════════════════════════
+
+
+class TestRawResponseFallback:
+    """Verify _brand_in_raw_response works correctly."""
+
+    def test_brand_found_with_rank(self):
+        from app.services.ai_visibility.workspace_filtering import _brand_in_raw_response
+        raw = "Here are recommendations:\n1. **Cursor** — Great tool.\n2. **Notion** — Another one."
+        matched, rank = _brand_in_raw_response("Cursor", raw)
+        assert matched
+        assert rank == 1
+
+    def test_brand_found_no_rank(self):
+        from app.services.ai_visibility.workspace_filtering import _brand_in_raw_response
+        raw = "Some text mentioning Cursor as a good option."
+        matched, rank = _brand_in_raw_response("Cursor", raw)
+        assert matched
+        assert rank is None
+
+    def test_brand_not_found(self):
+        from app.services.ai_visibility.workspace_filtering import _brand_in_raw_response
+        raw = "Here are recommendations:\n1. **HubSpot** — Great tool."
+        matched, rank = _brand_in_raw_response("Cursor", raw)
+        assert not matched
+
+    def test_short_name_skipped(self):
+        from app.services.ai_visibility.workspace_filtering import _brand_in_raw_response
+        raw = "AI is great for coding"
+        matched, _ = _brand_in_raw_response("A", raw)
+        assert not matched
+
+
+# ═══════════════════════════════════════════════
+# 18. Domain Normalization Tests
+# ═══════════════════════════════════════════════
+
+
+class TestDomainNormalization:
+    def test_normalize_strips_protocol_and_slash(self):
+        from app.services.ai_visibility.workspace_filtering import _normalize_domain
+        assert _normalize_domain("https://cursor.com/") == "cursor.com"
+        assert _normalize_domain("http://www.hubspot.com/") == "hubspot.com"
+        assert _normalize_domain("hubspot.com") == "hubspot.com"
+        assert _normalize_domain("https://peec.ai/") == "peec.ai"
+
+
+# ═══════════════════════════════════════════════
+# 19. Force Re-Run Tests
+# ═══════════════════════════════════════════════
+
+
+class TestForceReRun:
+    def test_force_clears_cache_and_reruns(self, workspace, competitor, billing):
+        ws_id = str(workspace.id)
+        # Create and approve a prompt
+        r = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/suggestions",
+            json={"prompt_text": "best crm alternatives"},
+        )
+        src_id = r.json()["id"]
+        approved = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/suggestions/approve",
+            json={"prompt_source_ids": [src_id]},
+        ).json()
+        pid = approved[0]["id"]
+
+        # First run
+        res1 = client.post(f"/api/workspaces/{ws_id}/ai-visibility/prompts/{pid}/run")
+        assert res1.status_code == 200
+        assert res1.json()["prompts_queued"] == 1
+
+        # Second run without force — should use cache
+        res2 = client.post(f"/api/workspaces/{ws_id}/ai-visibility/prompts/{pid}/run")
+        assert res2.json()["cached_reused"] == 1
+
+        # Third run with force — should re-execute
+        res3 = client.post(f"/api/workspaces/{ws_id}/ai-visibility/prompts/{pid}/run?force=true")
+        assert res3.json()["prompts_queued"] == 1
+
+
+# ═══════════════════════════════════════════════
+# 20. Full Pipeline with Custom Competitors (Key Bug Fix Test)
+# ═══════════════════════════════════════════════
+
+
+class TestFullPipelineCustomCompetitors:
+    """
+    Reproduces the exact user scenario: custom competitors (not in the
+    default brand pool) must produce visibility events after run+filter.
+    """
+
+    def test_custom_competitors_produce_events(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+
+        # Create custom competitors NOT in the default brand pool
+        comp1 = Competitor(workspace_id=workspace.id, name="Cursor", domain="https://cursor.com/")
+        comp2 = Competitor(workspace_id=workspace.id, name="Verdent AI", domain="https://verdent.ai/")
+        db.add_all([comp1, comp2])
+        db.commit()
+
+        # Add a prompt, approve, run
+        r = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/suggestions",
+            json={"prompt_text": "best tools for ai coding"},
+        )
+        assert r.status_code == 201
+        src_id = r.json()["id"]
+
+        res = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/suggestions/approve",
+            json={"prompt_source_ids": [src_id]},
+        )
+        tracked = res.json()
+        pid = tracked[0]["id"]
+
+        # Run with force=true
+        res = client.post(f"/api/workspaces/{ws_id}/ai-visibility/prompts/{pid}/run?force=true")
+        assert res.status_code == 200
+        assert res.json()["prompts_queued"] == 1
+
+        # Check visibility events — should find at least one match
+        events_res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/events")
+        assert events_res.status_code == 200
+        events = events_res.json()
+        assert len(events) > 0, "Expected visibility events for custom competitors but got none"
+
+        # At least one event should reference Cursor or Verdent AI
+        comp_ids = {str(comp1.id), str(comp2.id)}
+        matched_comp_ids = {e["competitor_id"] for e in events}
+        assert matched_comp_ids & comp_ids, f"No events for custom competitors. Got: {events}"
+
+        # Trends should also have data
+        trends_res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/trends?days=30")
+        assert trends_res.status_code == 200
+        trends = trends_res.json()
+        assert len(trends["trends"]) > 0
+        assert len(trends["competitor_summary"]) > 0
+
+
+# ═══════════════════════════════════════════════
+# 21. Original Full Pipeline (preserved)
+# ═══════════════════════════════════════════════
+
+
 class TestFullPipeline:
     """
     Full E2E pipeline:
@@ -746,19 +932,23 @@ class TestFullPipeline:
         prompt_id = tracked[0]["id"]
 
         # 5. Run prompt
-        res = client.post(f"/api/workspaces/{ws_id}/ai-visibility/prompts/{prompt_id}/run")
+        res = client.post(f"/api/workspaces/{ws_id}/ai-visibility/prompts/{prompt_id}/run?force=true")
         assert res.status_code == 200
         run_data = res.json()
-        assert run_data["prompts_queued"] + run_data["cached_reused"] >= 1
+        assert run_data["prompts_queued"] == 1
 
-        # 6. Check visibility events
+        # 6. Check visibility events — HubSpot should be found
         res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/events")
         assert res.status_code == 200
+        events = res.json()
+        assert len(events) > 0, "HubSpot should produce visibility events"
 
         # 7. Get trends
         res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/trends?days=30")
         assert res.status_code == 200
-        assert "trends" in res.json()
+        trends = res.json()
+        assert "trends" in trends
+        assert len(trends["trends"]) > 0
 
         # 8. Run correlation
         res = client.post(f"/api/workspaces/{ws_id}/ai-visibility/insights/correlate?days=7")

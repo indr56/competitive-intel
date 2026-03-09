@@ -459,10 +459,10 @@ export const aiVisibility = {
     request<PromptLimits>(`/api/workspaces/${wsId}/ai-visibility/prompts/limits`),
 
   // Execution
-  runAllPrompts: (wsId: string) =>
-    request<RunPromptsResponse>(`/api/workspaces/${wsId}/ai-visibility/prompts/run`, { method: "POST" }),
-  runSinglePrompt: (wsId: string, promptId: string) =>
-    request<RunPromptsResponse>(`/api/workspaces/${wsId}/ai-visibility/prompts/${promptId}/run`, { method: "POST" }),
+  runAllPrompts: (wsId: string, force = true) =>
+    request<RunPromptsResponse>(`/api/workspaces/${wsId}/ai-visibility/prompts/run?force=${force}`, { method: "POST" }),
+  runSinglePrompt: (wsId: string, promptId: string, force = true) =>
+    request<RunPromptsResponse>(`/api/workspaces/${wsId}/ai-visibility/prompts/${promptId}/run?force=${force}`, { method: "POST" }),
 
   // Visibility
   listEvents: (wsId: string, competitorId?: string, engine?: string) => {
