@@ -6,6 +6,12 @@ Key design:
 - Cache key: normalized_text + engine + date
 - If result exists for today, reuse it
 - Supports ChatGPT, Perplexity, Claude, Gemini
+
+Engine integration status:
+- ChatGPT:    REAL API (uses OPENAI_API_KEY from .env)
+- Perplexity: SIMULATED (placeholder — set PERPLEXITY_API_KEY to enable)
+- Claude:     SIMULATED (placeholder — set ANTHROPIC_API_KEY to enable)
+- Gemini:     SIMULATED (placeholder — set GOOGLE_API_KEY to enable)
 """
 
 from __future__ import annotations
@@ -17,6 +23,7 @@ from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models.models import (
     AIEngineEnum,
     AIEngineResult,
@@ -110,6 +117,144 @@ def _parse_brands_from_response(raw_response: str) -> tuple[list[str], list[dict
     return brands, ranking_data, citations
 
 
+# ─────────────────────────────────────────────────────
+# Real AI Engine Calls
+# ─────────────────────────────────────────────────────
+
+# System prompt used for all AI visibility queries.
+# Instructs the model to respond in a numbered-list format
+# so _parse_brands_from_response() can extract brands/rankings.
+_AI_VISIBILITY_SYSTEM_PROMPT = (
+    "You are an expert technology analyst. When asked about tools, products, "
+    "or services, respond with a numbered list of your top recommendations. "
+    "Format each item as: '<number>. <ProductName> — <brief description>'. "
+    "If you know the product's official website, include it on the next line as: "
+    "'   Source: https://example.com'. "
+    "Include between 5 and 8 recommendations. Be specific and factual."
+)
+
+
+def _call_openai_engine(prompt_text: str) -> str:
+    """
+    Call real OpenAI ChatGPT API for the 'chatgpt' engine.
+    Uses OPENAI_API_KEY from .env via the existing OpenAI client.
+    Returns raw response text.
+    """
+    from openai import OpenAI
+
+    settings = get_settings()
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    response = client.chat.completions.create(
+        model=settings.LLM_MODEL or "gpt-4o",
+        messages=[
+            {"role": "system", "content": _AI_VISIBILITY_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt_text},
+        ],
+        temperature=0.3,
+        max_tokens=2048,
+    )
+    return response.choices[0].message.content or ""
+
+
+def _call_perplexity_engine(prompt_text: str) -> Optional[str]:
+    """
+    Placeholder for real Perplexity API integration.
+    To enable: set PERPLEXITY_API_KEY in .env and implement this function.
+    Returns None to fall back to simulation.
+
+    # Future implementation:
+    # from openai import OpenAI  # Perplexity uses OpenAI-compatible API
+    # client = OpenAI(
+    #     api_key=settings.PERPLEXITY_API_KEY,
+    #     base_url="https://api.perplexity.ai"
+    # )
+    # response = client.chat.completions.create(
+    #     model="sonar",
+    #     messages=[{"role": "user", "content": prompt_text}],
+    # )
+    # return response.choices[0].message.content
+    """
+    return None  # Falls back to simulation
+
+
+def _call_claude_engine(prompt_text: str) -> Optional[str]:
+    """
+    Placeholder for real Anthropic Claude API integration.
+    To enable: set ANTHROPIC_API_KEY in .env and implement this function.
+    Returns None to fall back to simulation.
+
+    # Future implementation:
+    # from anthropic import Anthropic
+    # client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    # response = client.messages.create(
+    #     model="claude-sonnet-4-20250514",
+    #     max_tokens=2048,
+    #     system=_AI_VISIBILITY_SYSTEM_PROMPT,
+    #     messages=[{"role": "user", "content": prompt_text}],
+    # )
+    # return response.content[0].text
+    """
+    return None  # Falls back to simulation
+
+
+def _call_gemini_engine(prompt_text: str) -> Optional[str]:
+    """
+    Placeholder for real Google Gemini API integration.
+    To enable: set GOOGLE_API_KEY in .env and implement this function.
+    Returns None to fall back to simulation.
+
+    # Future implementation:
+    # import google.generativeai as genai
+    # genai.configure(api_key=settings.GOOGLE_API_KEY)
+    # model = genai.GenerativeModel("gemini-1.5-pro")
+    # response = model.generate_content(
+    #     f"{_AI_VISIBILITY_SYSTEM_PROMPT}\n\n{prompt_text}"
+    # )
+    # return response.text
+    """
+    return None  # Falls back to simulation
+
+
+def _has_real_api_key(engine: str) -> bool:
+    """
+    Check if a real (non-placeholder) API key is available for the given engine.
+    """
+    settings = get_settings()
+    if engine == "chatgpt":
+        key = settings.OPENAI_API_KEY
+        return bool(key and key.startswith("sk-") and "your-key" not in key)
+    elif engine == "perplexity":
+        # PERPLEXITY_API_KEY not yet in Settings — placeholder for future
+        return False
+    elif engine == "claude":
+        key = settings.ANTHROPIC_API_KEY
+        return bool(key and key.startswith("sk-ant-") and "your-key" not in key)
+    elif engine == "gemini":
+        # GOOGLE_API_KEY not yet in Settings — placeholder for future
+        return False
+    return False
+
+
+def _call_real_engine(engine: str, prompt_text: str) -> Optional[str]:
+    """
+    Dispatch to the real API for the given engine.
+    Returns the raw response string, or None if not available / not implemented.
+    """
+    if engine == "chatgpt" and _has_real_api_key("chatgpt"):
+        return _call_openai_engine(prompt_text)
+    elif engine == "perplexity":
+        return _call_perplexity_engine(prompt_text)
+    elif engine == "claude":
+        return _call_claude_engine(prompt_text)
+    elif engine == "gemini":
+        return _call_gemini_engine(prompt_text)
+    return None
+
+
+# ─────────────────────────────────────────────────────
+# Core execution
+# ─────────────────────────────────────────────────────
+
 def execute_prompt_on_engine(
     db: Session,
     prompt_run: AIPromptRun,
@@ -119,13 +264,15 @@ def execute_prompt_on_engine(
     Execute a prompt on a specific AI engine.
     If cached result exists, return it.
 
-    NOTE: In production, this would call actual AI APIs.
-    Currently uses a simulation that returns realistic mock data.
-    Set environment variables for real API keys:
-    - OPENAI_API_KEY (ChatGPT)
-    - PERPLEXITY_API_KEY
-    - ANTHROPIC_API_KEY (Claude)
-    - GOOGLE_API_KEY (Gemini)
+    Routing logic:
+    - If a real API key is available for the engine, calls the real API.
+    - Otherwise falls back to deterministic simulation.
+
+    Current status:
+    - chatgpt:    REAL API (OPENAI_API_KEY)
+    - perplexity: SIMULATED (set PERPLEXITY_API_KEY to enable)
+    - claude:     SIMULATED (set ANTHROPIC_API_KEY to enable)
+    - gemini:     SIMULATED (set GOOGLE_API_KEY to enable)
     """
     # Check cache first
     existing = (
@@ -151,13 +298,29 @@ def execute_prompt_on_engine(
         db.flush()
 
     try:
-        # --- Simulated AI engine response ---
-        # In production, replace with actual API calls
-        # Query all competitor names globally (not per-workspace) to make
-        # simulation realistic — real AI engines would mention real brands.
-        all_comps = db.query(Competitor.name).distinct().all()
-        known_brands = [c[0] for c in all_comps if c[0]]
-        raw_response = _simulate_engine_response(prompt_run.prompt_text, engine, known_brands)
+        raw_response = None
+
+        # Try real API first
+        if _has_real_api_key(engine):
+            try:
+                raw_response = _call_real_engine(engine, prompt_run.prompt_text)
+                if raw_response:
+                    logger.info(f"Engine {engine}: used REAL API for '{prompt_run.prompt_text[:40]}...'")
+            except Exception as api_err:
+                logger.warning(
+                    f"Engine {engine}: real API failed, falling back to simulation. "
+                    f"Error: {api_err}"
+                )
+                raw_response = None
+
+        # Fall back to simulation if real API not available or failed
+        if raw_response is None:
+            all_comps = db.query(Competitor.name).distinct().all()
+            known_brands = [c[0] for c in all_comps if c[0]]
+            raw_response = _simulate_engine_response(
+                prompt_run.prompt_text, engine, known_brands
+            )
+            logger.info(f"Engine {engine}: used SIMULATION for '{prompt_run.prompt_text[:40]}...'")
 
         brands, ranking_data, citations = _parse_brands_from_response(raw_response)
 

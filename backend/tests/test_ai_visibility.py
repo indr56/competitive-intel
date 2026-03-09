@@ -50,6 +50,10 @@ from app.services.ai_visibility.prompt_execution import (
     normalize_prompt,
     get_or_create_prompt_run,
     run_prompt_globally,
+    _has_real_api_key,
+    _call_real_engine,
+    _simulate_engine_response,
+    _AI_VISIBILITY_SYSTEM_PROMPT,
 )
 from app.services.ai_visibility.prompt_suggestion import (
     generate_all_suggestions,
@@ -1190,3 +1194,96 @@ class TestCorrelationEngineE2E:
             if pricing_scores and hiring_scores:
                 assert pricing_scores[0] > hiring_scores[0], \
                     f"pricing_change ({pricing_scores[0]}) should score higher than hiring ({hiring_scores[0]})"
+
+
+# ═══════════════════════════════════════════════
+# 23. Engine Routing — Real API vs Simulation
+# ═══════════════════════════════════════════════
+
+
+class TestEngineRouting:
+    """
+    Tests that engine routing correctly:
+    - Uses real OpenAI API for chatgpt when key is present
+    - Falls back to simulation for chatgpt when key is missing
+    - Always simulates claude/gemini/perplexity (placeholders)
+    - Falls back gracefully on API errors
+    """
+
+    def test_has_real_api_key_chatgpt_with_real_key(self):
+        with patch("app.services.ai_visibility.prompt_execution.get_settings") as mock_settings:
+            mock_settings.return_value = MagicMock(OPENAI_API_KEY="sk-proj-real-key-here")
+            assert _has_real_api_key("chatgpt") is True
+
+    def test_has_real_api_key_chatgpt_with_placeholder(self):
+        with patch("app.services.ai_visibility.prompt_execution.get_settings") as mock_settings:
+            mock_settings.return_value = MagicMock(OPENAI_API_KEY="sk-your-key-here")
+            assert _has_real_api_key("chatgpt") is False
+
+    def test_has_real_api_key_chatgpt_empty(self):
+        with patch("app.services.ai_visibility.prompt_execution.get_settings") as mock_settings:
+            mock_settings.return_value = MagicMock(OPENAI_API_KEY="")
+            assert _has_real_api_key("chatgpt") is False
+
+    def test_has_real_api_key_claude_placeholder(self):
+        with patch("app.services.ai_visibility.prompt_execution.get_settings") as mock_settings:
+            mock_settings.return_value = MagicMock(ANTHROPIC_API_KEY="sk-ant-your-key-here")
+            assert _has_real_api_key("claude") is False
+
+    def test_has_real_api_key_perplexity_always_false(self):
+        assert _has_real_api_key("perplexity") is False
+
+    def test_has_real_api_key_gemini_always_false(self):
+        assert _has_real_api_key("gemini") is False
+
+    def test_call_real_engine_perplexity_returns_none(self):
+        result = _call_real_engine("perplexity", "test prompt")
+        assert result is None
+
+    def test_call_real_engine_claude_returns_none(self):
+        result = _call_real_engine("claude", "test prompt")
+        assert result is None
+
+    def test_call_real_engine_gemini_returns_none(self):
+        result = _call_real_engine("gemini", "test prompt")
+        assert result is None
+
+    def test_call_real_engine_chatgpt_calls_openai(self):
+        """When chatgpt has a real key, _call_real_engine dispatches to _call_openai_engine."""
+        fake_response = "1. Cursor — AI code editor\n   Source: https://cursor.com"
+
+        with patch("app.services.ai_visibility.prompt_execution._has_real_api_key", return_value=True), \
+             patch("app.services.ai_visibility.prompt_execution._call_openai_engine", return_value=fake_response) as mock_fn:
+            result = _call_real_engine("chatgpt", "best ai code editors")
+            assert result is not None
+            assert "Cursor" in result
+            mock_fn.assert_called_once_with("best ai code editors")
+
+    def test_simulation_still_works_for_all_engines(self):
+        """Simulation produces valid responses for all engines."""
+        for engine in ["chatgpt", "perplexity", "claude", "gemini"]:
+            resp = _simulate_engine_response("best crm tools", engine)
+            assert resp is not None
+            assert len(resp) > 50
+            assert "1." in resp  # Has numbered list
+
+    def test_system_prompt_exists_and_has_format_instructions(self):
+        assert _AI_VISIBILITY_SYSTEM_PROMPT is not None
+        assert "numbered list" in _AI_VISIBILITY_SYSTEM_PROMPT
+        assert "Source:" in _AI_VISIBILITY_SYSTEM_PROMPT
+
+    def test_execute_engine_falls_back_on_api_error(self, db, workspace):
+        """If real API raises, engine falls back to simulation gracefully."""
+        from app.services.ai_visibility.prompt_execution import execute_prompt_on_engine
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        run = get_or_create_prompt_run(db, "test fallback prompt", today)
+        db.flush()
+
+        with patch("app.services.ai_visibility.prompt_execution._has_real_api_key", return_value=True), \
+             patch("app.services.ai_visibility.prompt_execution._call_real_engine", side_effect=Exception("API down")):
+            result = execute_prompt_on_engine(db, run, "chatgpt")
+            # Should complete via simulation fallback, not fail
+            assert result.status == RunStatusEnum.COMPLETED.value
+            assert result.raw_response is not None
+            assert len(result.mentioned_brands) > 0
