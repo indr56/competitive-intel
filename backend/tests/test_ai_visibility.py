@@ -60,6 +60,8 @@ from app.services.ai_visibility.prompt_suggestion import (
 )
 from app.services.ai_visibility.workspace_filtering import (
     _brand_matches,
+    _brand_in_raw_response,
+    _extract_core_brand_name,
     filter_results_for_workspace,
 )
 from app.services.ai_visibility.correlation_engine import (
@@ -1254,10 +1256,11 @@ class TestEngineRouting:
 
         with patch("app.services.ai_visibility.prompt_execution._has_real_api_key", return_value=True), \
              patch("app.services.ai_visibility.prompt_execution._call_openai_engine", return_value=fake_response) as mock_fn:
-            result = _call_real_engine("chatgpt", "best ai code editors")
+            brands = ["Cursor AI", "WindSurf AI"]
+            result = _call_real_engine("chatgpt", "best ai code editors", brands)
             assert result is not None
             assert "Cursor" in result
-            mock_fn.assert_called_once_with("best ai code editors")
+            mock_fn.assert_called_once_with("best ai code editors", brands)
 
     def test_simulation_still_works_for_all_engines(self):
         """Simulation produces valid responses for all engines."""
@@ -1287,3 +1290,88 @@ class TestEngineRouting:
             assert result.status == RunStatusEnum.COMPLETED.value
             assert result.raw_response is not None
             assert len(result.mentioned_brands) > 0
+
+
+# ═══════════════════════════════════════════════
+# 24. Improved Brand Matching (core name extraction)
+# ═══════════════════════════════════════════════
+
+
+class TestCoreBrandMatching:
+    """
+    Tests that brand matching handles real AI responses where the AI says
+    'Cursor' but the competitor is named 'Cursor AI', etc.
+    """
+
+    def test_extract_core_brand_name_strips_ai(self):
+        assert _extract_core_brand_name("Cursor AI") == "Cursor"
+
+    def test_extract_core_brand_name_strips_multiple_suffixes(self):
+        assert _extract_core_brand_name("Acme AI Labs") == "Acme"
+
+    def test_extract_core_brand_name_preserves_single_word(self):
+        assert _extract_core_brand_name("Cursor") == "Cursor"
+
+    def test_extract_core_brand_name_strips_inc(self):
+        assert _extract_core_brand_name("Datadog Inc") == "Datadog"
+
+    def test_extract_core_brand_name_preserves_non_suffix(self):
+        assert _extract_core_brand_name("Visual Studio Code") == "Visual Studio Code"
+
+    def test_brand_matches_cursor_ai_vs_cursor(self):
+        """Competitor 'Cursor AI' should match extracted brand 'Cursor'."""
+        matched, rank = _brand_matches("Cursor AI", ["Cursor", "Windsurf", "VS Code"])
+        assert matched is True
+        assert rank == 1
+
+    def test_brand_matches_windsurf_ai_vs_windsurf(self):
+        """Competitor 'WindSurf AI' should match extracted brand 'Windsurf'."""
+        matched, rank = _brand_matches("WindSurf AI", ["Cursor", "Windsurf", "VS Code"])
+        assert matched is True
+        assert rank == 2
+
+    def test_brand_matches_continue_ai_vs_continue(self):
+        """Competitor 'Continue AI' should match brand 'Continue'."""
+        matched, rank = _brand_matches("Continue AI", ["Cursor", "Windsurf", "Continue"])
+        assert matched is True
+        assert rank == 3
+
+    def test_brand_matches_exact_still_works(self):
+        matched, rank = _brand_matches("Cursor AI", ["Cursor AI"])
+        assert matched is True
+        assert rank == 1
+
+    def test_brand_matches_no_match(self):
+        matched, rank = _brand_matches("Cursor AI", ["HubSpot", "Salesforce"])
+        assert matched is False
+        assert rank is None
+
+    def test_brand_in_raw_response_partial_name(self):
+        """'Cursor AI' should match raw response containing 'Cursor'."""
+        raw = "1. Cursor — best overall for most people\n2. Windsurf — best for agentic"
+        matched, rank = _brand_in_raw_response("Cursor AI", raw)
+        assert matched is True
+        assert rank == 1
+
+    def test_brand_in_raw_response_windsurf_ai(self):
+        raw = "1. Cursor — best overall\n2. Windsurf — best for agentic"
+        matched, rank = _brand_in_raw_response("WindSurf AI", raw)
+        assert matched is True
+        assert rank == 2
+
+    def test_brand_in_raw_response_full_name_still_works(self):
+        raw = "1. Cursor AI — best overall\n2. WindSurf AI — great"
+        matched, rank = _brand_in_raw_response("Cursor AI", raw)
+        assert matched is True
+        assert rank == 1
+
+    def test_brand_in_raw_response_no_match(self):
+        raw = "1. HubSpot — best CRM\n2. Salesforce — enterprise"
+        matched, rank = _brand_in_raw_response("Cursor AI", raw)
+        assert matched is False
+
+    def test_brand_in_raw_response_mentioned_but_no_rank(self):
+        raw = "Many users prefer Cursor for its AI features."
+        matched, rank = _brand_in_raw_response("Cursor AI", raw)
+        assert matched is True
+        assert rank is None

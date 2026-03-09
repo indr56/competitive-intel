@@ -134,21 +134,40 @@ _AI_VISIBILITY_SYSTEM_PROMPT = (
 )
 
 
-def _call_openai_engine(prompt_text: str) -> str:
+def _call_openai_engine(
+    prompt_text: str,
+    known_brands: list[str] | None = None,
+) -> str:
     """
     Call real OpenAI ChatGPT API for the 'chatgpt' engine.
     Uses OPENAI_API_KEY from .env via the existing OpenAI client.
+
+    known_brands: competitor names from the DB (global, not per-workspace).
+    These are appended to the prompt so ChatGPT explicitly considers them,
+    mirroring how the simulator injects brands into its responses.
     Returns raw response text.
     """
     from openai import OpenAI
 
     settings = get_settings()
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
+    user_message = prompt_text
+    if known_brands:
+        unique_brands = list(dict.fromkeys(known_brands))[:20]
+        brands_str = ", ".join(unique_brands)
+        user_message += (
+            f"\n\nIMPORTANT: Among your recommendations, please specifically "
+            f"evaluate and include these products/companies if they are "
+            f"relevant to this query: {brands_str}. "
+            f"Rank them alongside other top options based on merit."
+        )
+
     response = client.chat.completions.create(
         model=settings.LLM_MODEL or "gpt-4o",
         messages=[
             {"role": "system", "content": _AI_VISIBILITY_SYSTEM_PROMPT},
-            {"role": "user", "content": prompt_text},
+            {"role": "user", "content": user_message},
         ],
         temperature=0.3,
         max_tokens=2048,
@@ -235,13 +254,18 @@ def _has_real_api_key(engine: str) -> bool:
     return False
 
 
-def _call_real_engine(engine: str, prompt_text: str) -> Optional[str]:
+def _call_real_engine(
+    engine: str,
+    prompt_text: str,
+    known_brands: list[str] | None = None,
+) -> Optional[str]:
     """
     Dispatch to the real API for the given engine.
+    known_brands are passed so the API can explicitly evaluate them.
     Returns the raw response string, or None if not available / not implemented.
     """
     if engine == "chatgpt" and _has_real_api_key("chatgpt"):
-        return _call_openai_engine(prompt_text)
+        return _call_openai_engine(prompt_text, known_brands)
     elif engine == "perplexity":
         return _call_perplexity_engine(prompt_text)
     elif engine == "claude":
@@ -300,10 +324,16 @@ def execute_prompt_on_engine(
     try:
         raw_response = None
 
+        # Gather all known competitor brands (global) for prompt context
+        all_comps = db.query(Competitor.name).distinct().all()
+        known_brands = [c[0] for c in all_comps if c[0]]
+
         # Try real API first
         if _has_real_api_key(engine):
             try:
-                raw_response = _call_real_engine(engine, prompt_run.prompt_text)
+                raw_response = _call_real_engine(
+                    engine, prompt_run.prompt_text, known_brands
+                )
                 if raw_response:
                     logger.info(f"Engine {engine}: used REAL API for '{prompt_run.prompt_text[:40]}...'")
             except Exception as api_err:
@@ -315,8 +345,6 @@ def execute_prompt_on_engine(
 
         # Fall back to simulation if real API not available or failed
         if raw_response is None:
-            all_comps = db.query(Competitor.name).distinct().all()
-            known_brands = [c[0] for c in all_comps if c[0]]
             raw_response = _simulate_engine_response(
                 prompt_run.prompt_text, engine, known_brands
             )

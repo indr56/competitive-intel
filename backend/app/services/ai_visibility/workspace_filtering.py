@@ -31,20 +31,51 @@ logger = logging.getLogger(__name__)
 def _brand_matches(competitor_name: str, mentioned_brands: list[str]) -> tuple[bool, int | None]:
     """
     Check if a competitor name matches any mentioned brand.
+    Uses both full name and core name (suffix-stripped) for matching.
+    e.g. competitor "Cursor AI" matches extracted brand "Cursor".
     Returns (matched, rank_position).
     """
     comp_lower = competitor_name.lower().strip()
+    core_lower = _extract_core_brand_name(competitor_name).lower()
     for i, brand in enumerate(mentioned_brands):
         brand_lower = brand.lower().strip()
-        # Exact match or substring match
+        brand_core = _extract_core_brand_name(brand).lower()
+        # Full name checks
         if comp_lower == brand_lower or comp_lower in brand_lower or brand_lower in comp_lower:
             return True, i + 1
+        # Core name checks (e.g. "cursor" vs "cursor")
+        if core_lower and brand_core and len(core_lower) >= 3 and len(brand_core) >= 3:
+            if core_lower == brand_core or core_lower in brand_core or brand_core in core_lower:
+                return True, i + 1
     return False, None
+
+
+# Common suffixes stripped when matching competitor names against AI responses.
+# e.g. "Cursor AI" → core name "Cursor", "Acme Inc" → "Acme"
+_BRAND_SUFFIXES = {
+    "ai", "inc", "labs", "corp", "co", "tech", "io", "hq",
+    "software", "platform", "app", "cloud",
+}
+
+
+def _extract_core_brand_name(competitor_name: str) -> str:
+    """
+    Extract the core brand name by stripping common suffixes.
+    'Cursor AI' → 'Cursor', 'WindSurf AI' → 'WindSurf', 'Acme Inc' → 'Acme'
+    Returns the core name (original casing preserved for display,
+    but callers should compare case-insensitively).
+    """
+    parts = competitor_name.strip().split()
+    # Strip trailing suffix words
+    while len(parts) > 1 and parts[-1].lower() in _BRAND_SUFFIXES:
+        parts.pop()
+    return " ".join(parts)
 
 
 def _brand_in_raw_response(competitor_name: str, raw_response: str | None) -> tuple[bool, int | None]:
     """
     Fallback: search raw_response text for competitor name mentions.
+    Checks both the full name and the core brand name (suffix-stripped).
     Returns (matched, rank_position or None).
     """
     if not raw_response or not competitor_name:
@@ -55,18 +86,28 @@ def _brand_in_raw_response(competitor_name: str, raw_response: str | None) -> tu
         return False, None
 
     resp_lower = raw_response.lower()
-    if comp_lower not in resp_lower:
-        return False, None
 
-    # Try to determine rank position from numbered list
-    for line in raw_response.split('\n'):
-        line_stripped = line.strip()
-        m = re.match(r'^(\d+)[.)\s]', line_stripped)
-        if m and comp_lower in line_stripped.lower():
-            return True, int(m.group(1))
+    # Build list of name variants to check
+    search_names = [comp_lower]
+    core = _extract_core_brand_name(competitor_name).lower()
+    if core != comp_lower and len(core) >= 3:
+        search_names.append(core)
 
-    # Found in text but no rank position
-    return True, None
+    for name in search_names:
+        if name not in resp_lower:
+            continue
+
+        # Try to determine rank position from numbered list
+        for line in raw_response.split('\n'):
+            line_stripped = line.strip()
+            m = re.match(r'^(\d+)[.)\s]', line_stripped)
+            if m and name in line_stripped.lower():
+                return True, int(m.group(1))
+
+        # Found in text but no rank position
+        return True, None
+
+    return False, None
 
 
 def _normalize_domain(domain: str) -> str:
