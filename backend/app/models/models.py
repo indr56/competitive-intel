@@ -445,6 +445,195 @@ class MonitoredPrompt(Base):
     cluster = relationship("PromptCluster", back_populates="prompts")
 
 
+# ── AI Visibility Intelligence ──
+
+
+class PromptSourceType(str, enum.Enum):
+    MANUAL = "manual"
+    COMPETITOR = "competitor"
+    KEYWORD = "keyword"
+    TEMPLATE = "template"
+    CATEGORY = "category"
+
+
+class PromptStatusEnum(str, enum.Enum):
+    SUGGESTED = "suggested"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    PAUSED = "paused"
+
+
+class AIEngineEnum(str, enum.Enum):
+    CHATGPT = "chatgpt"
+    PERPLEXITY = "perplexity"
+    CLAUDE = "claude"
+    GEMINI = "gemini"
+
+
+class RunStatusEnum(str, enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class PriorityLevel(str, enum.Enum):
+    P0 = "P0"
+    P1 = "P1"
+    P2 = "P2"
+
+
+class AIWorkspaceKeyword(Base):
+    __tablename__ = "ai_workspace_keywords"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "keyword", name="uq_ai_ws_keyword"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    keyword = Column(String(255), nullable=False)
+    source = Column(String(50), nullable=False, default="user")  # "user" or "auto_extracted"
+    is_approved = Column(Boolean, default=False)
+    extracted_from = Column(String(100), nullable=True)  # e.g. "homepage", "features", "blog_title"
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AIPromptSource(Base):
+    """Suggested prompts before user approval."""
+    __tablename__ = "ai_prompt_sources"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "prompt_text", name="uq_ai_prompt_source_ws_text"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    prompt_text = Column(Text, nullable=False)
+    source_type = Column(String(50), nullable=False)  # manual/competitor/keyword/template/category
+    source_detail = Column(JSONB, nullable=True)  # e.g. {"competitor": "Zapier", "template": "best {kw} tools"}
+    status = Column(String(50), default=PromptStatusEnum.SUGGESTED.value, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class AITrackedPrompt(Base):
+    """Approved prompts that participate in global execution."""
+    __tablename__ = "ai_tracked_prompts"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "prompt_text", name="uq_ai_tracked_prompt_ws_text"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    prompt_text = Column(Text, nullable=False)
+    normalized_text = Column(String(512), nullable=False)
+    source_type = Column(String(50), nullable=False)
+    cluster_id = Column(UUID(as_uuid=True), ForeignKey("ai_prompt_clusters.id", ondelete="SET NULL"), nullable=True)
+    is_active = Column(Boolean, default=True)
+    last_run_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    cluster = relationship("AIPromptCluster", back_populates="tracked_prompts")
+    visibility_events = relationship("AIVisibilityEvent", back_populates="tracked_prompt", cascade="all, delete-orphan")
+
+
+class AIPromptCluster(Base):
+    """Semantic clusters of tracked prompts for analytics."""
+    __tablename__ = "ai_prompt_clusters"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    cluster_topic = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    tracked_prompts = relationship("AITrackedPrompt", back_populates="cluster")
+
+
+class AIPromptRun(Base):
+    """Global prompt execution record — NOT workspace-specific."""
+    __tablename__ = "ai_prompt_runs"
+    __table_args__ = (
+        UniqueConstraint("normalized_text", "run_date", name="uq_ai_prompt_run_text_date"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    prompt_text = Column(Text, nullable=False)
+    normalized_text = Column(String(512), nullable=False)
+    run_date = Column(DateTime(timezone=True), nullable=False)  # date of scheduled run
+    status = Column(String(50), default=RunStatusEnum.PENDING.value, nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    engine_results = relationship("AIEngineResult", back_populates="prompt_run", cascade="all, delete-orphan")
+
+
+class AIEngineResult(Base):
+    """Per-engine result for a global prompt run."""
+    __tablename__ = "ai_engine_results"
+    __table_args__ = (
+        UniqueConstraint("prompt_run_id", "engine", name="uq_ai_engine_result_run_engine"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    prompt_run_id = Column(UUID(as_uuid=True), ForeignKey("ai_prompt_runs.id", ondelete="CASCADE"), nullable=False)
+    engine = Column(String(50), nullable=False)  # chatgpt/perplexity/claude/gemini
+    raw_response = Column(Text, nullable=True)
+    mentioned_brands = Column(ARRAY(String), default=[])
+    ranking_data = Column(JSONB, nullable=True)  # [{"brand": "X", "position": 1}, ...]
+    citations = Column(ARRAY(Text), default=[])
+    status = Column(String(50), default=RunStatusEnum.PENDING.value, nullable=False)
+    error_message = Column(Text, nullable=True)
+    executed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    prompt_run = relationship("AIPromptRun", back_populates="engine_results")
+    visibility_events = relationship("AIVisibilityEvent", back_populates="engine_result", cascade="all, delete-orphan")
+
+
+class AIVisibilityEvent(Base):
+    """Workspace-filtered visibility detection from global results."""
+    __tablename__ = "ai_visibility_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    competitor_id = Column(UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=False)
+    tracked_prompt_id = Column(UUID(as_uuid=True), ForeignKey("ai_tracked_prompts.id", ondelete="CASCADE"), nullable=False)
+    engine_result_id = Column(UUID(as_uuid=True), ForeignKey("ai_engine_results.id", ondelete="CASCADE"), nullable=False)
+    engine = Column(String(50), nullable=False)
+    mentioned = Column(Boolean, default=False)
+    rank_position = Column(Integer, nullable=True)
+    citation_url = Column(Text, nullable=True)
+    event_date = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    tracked_prompt = relationship("AITrackedPrompt", back_populates="visibility_events")
+    engine_result = relationship("AIEngineResult", back_populates="visibility_events")
+
+
+class AIImpactInsight(Base):
+    """Correlation between competitor signals and AI visibility changes."""
+    __tablename__ = "ai_impact_insights"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    competitor_id = Column(UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=False)
+    signal_event_id = Column(String(100), nullable=True)  # ID of change_event or competitor_event
+    signal_type = Column(String(50), nullable=True)
+    signal_title = Column(Text, nullable=True)
+    prompt_text = Column(Text, nullable=True)
+    tracked_prompt_id = Column(UUID(as_uuid=True), ForeignKey("ai_tracked_prompts.id", ondelete="SET NULL"), nullable=True)
+    visibility_before = Column(Integer, default=0)
+    visibility_after = Column(Integer, default=0)
+    engines_affected = Column(ARRAY(String), default=[])
+    citations = Column(ARRAY(Text), default=[])
+    impact_score = Column(Float, nullable=True)
+    priority_level = Column(String(10), default=PriorityLevel.P2.value)  # P0/P1/P2
+    explanation = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class WebhookEvent(Base):
     __tablename__ = "webhook_events"
     __table_args__ = (

@@ -317,6 +317,7 @@ export interface PlanLimits {
   min_check_interval_hours: number;
   white_label: boolean;
   max_workspaces: number;
+  max_tracked_prompts: number;
 }
 
 export interface IntervalPricing {
@@ -418,4 +419,109 @@ export interface ClusteringResult {
   clusters_updated: number;
   prompts_clustered: number;
   prompts_unclustered: number;
+}
+
+// ── AI Visibility Intelligence ──
+
+export interface AIKeyword {
+  id: string;
+  workspace_id: string;
+  keyword: string;
+  source: string;
+  is_approved: boolean;
+  extracted_from: string | null;
+  created_at: string;
+}
+
+export interface AIPromptSource {
+  id: string;
+  workspace_id: string;
+  prompt_text: string;
+  source_type: string;
+  source_detail: Record<string, unknown> | null;
+  status: string;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface AITrackedPrompt {
+  id: string;
+  workspace_id: string;
+  prompt_text: string;
+  normalized_text: string;
+  source_type: string;
+  cluster_id: string | null;
+  is_active: boolean;
+  last_run_at: string | null;
+  created_at: string;
+}
+
+export interface AIVisibilityEvent {
+  id: string;
+  workspace_id: string;
+  competitor_id: string;
+  tracked_prompt_id: string;
+  engine_result_id: string;
+  engine: string;
+  mentioned: boolean;
+  rank_position: number | null;
+  citation_url: string | null;
+  event_date: string;
+  created_at: string;
+}
+
+export interface AIImpactInsight {
+  id: string;
+  workspace_id: string;
+  competitor_id: string;
+  signal_event_id: string | null;
+  signal_type: string | null;
+  signal_title: string | null;
+  prompt_text: string | null;
+  tracked_prompt_id: string | null;
+  visibility_before: number;
+  visibility_after: number;
+  engines_affected: string[];
+  citations: string[];
+  impact_score: number | null;
+  priority_level: string;
+  explanation: string | null;
+  created_at: string;
+}
+
+export interface VisibilityTrendPoint {
+  date: string;
+  engine: string;
+  mentions: number;
+  avg_rank: number | null;
+}
+
+export interface VisibilityTrendsData {
+  trends: VisibilityTrendPoint[];
+  engines_breakdown: Record<string, number>;
+  competitor_summary: {
+    competitor_id: string;
+    competitor_name: string;
+    total_mentions: number;
+    avg_rank: number | null;
+  }[];
+  citations: {
+    citation_url: string;
+    engine: string;
+    rank_position: number | null;
+    event_date: string;
+  }[];
+}
+
+export interface PromptLimits {
+  limit: number;
+  used: number;
+  remaining: number;
+  plan: string;
+}
+
+export interface RunPromptsResponse {
+  prompts_queued: number;
+  cached_reused: number;
+  message: string;
 }

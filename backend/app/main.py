@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.api import workspaces, competitors, pages, snapshots, changes, digests, insights, billing, events, signal_sources, prompt_clusters
+from app.api import workspaces, competitors, pages, snapshots, changes, digests, insights, billing, events, signal_sources, prompt_clusters, ai_visibility
 
 settings = get_settings()
 
@@ -31,6 +31,7 @@ app.include_router(billing.router)
 app.include_router(events.router)
 app.include_router(signal_sources.router)
 app.include_router(prompt_clusters.router)
+app.include_router(ai_visibility.router)
 
 
 @app.get("/health")

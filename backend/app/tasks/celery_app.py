@@ -45,12 +45,21 @@ celery_app.conf.update(
             "task": "app.tasks.signal_tasks.run_review_collector",
             "schedule": crontab(minute=0, hour=3),  # daily at 3am UTC
         },
+        "ai-visibility-daily-prompts": {
+            "task": "app.tasks.ai_visibility_tasks.run_daily_global_prompts",
+            "schedule": crontab(minute=0, hour=2),  # daily at 2am UTC
+        },
+        "ai-visibility-daily-correlation": {
+            "task": "app.tasks.ai_visibility_tasks.run_correlation_for_all_workspaces",
+            "schedule": crontab(minute=30, hour=2),  # daily at 2:30am UTC (after prompt runs)
+        },
     },
     task_routes={
         "app.tasks.capture_tasks.*": {"queue": "capture"},
         "app.tasks.digest_tasks.*": {"queue": "default"},
         "app.tasks.pipeline_tasks.*": {"queue": "default"},
         "app.tasks.signal_tasks.*": {"queue": "default"},
+        "app.tasks.ai_visibility_tasks.*": {"queue": "default"},
     },
 )
 

@@ -55,6 +55,7 @@ PLAN_DEFINITIONS: dict[str, dict[str, Any]] = {
             "min_check_interval_hours": 24,
             "white_label": False,
             "max_workspaces": 1,
+            "max_tracked_prompts": 10,
         },
     },
     "pro": {
@@ -70,6 +71,7 @@ PLAN_DEFINITIONS: dict[str, dict[str, Any]] = {
             "min_check_interval_hours": 6,
             "white_label": False,
             "max_workspaces": 3,
+            "max_tracked_prompts": 25,
         },
     },
     "agency": {
@@ -85,6 +87,7 @@ PLAN_DEFINITIONS: dict[str, dict[str, Any]] = {
             "min_check_interval_hours": 1,
             "white_label": True,
             "max_workspaces": 20,
+            "max_tracked_prompts": 100,
         },
     },
 }
