@@ -68,7 +68,10 @@ from app.services.ai_visibility.visibility_trends import (
     get_competitor_visibility_summary,
     get_citation_urls,
 )
-from app.services.ai_visibility.correlation_engine import correlate_signals_with_visibility
+from app.services.ai_visibility.correlation_engine import (
+    correlate_signals_with_visibility,
+    _generate_summary_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -636,20 +639,31 @@ def list_insights_compact(
                  else r.visibility_after - r.visibility_before)
         engines = r.engines_affected or []
         engine_summary = ", ".join(engines) if engines else "none"
+        comp_name = comp_map.get(str(r.competitor_id), "Unknown")
+        summary_text = _generate_summary_text(
+            insight_type=r.insight_type or "ai_impact",
+            competitor_name=comp_name,
+            signal_type=r.signal_type or "",
+            engines_affected=engines,
+            visibility_delta=delta,
+            visibility_before=r.visibility_before,
+            visibility_after=r.visibility_after,
+        )
         cards.append(AIInsightCompactRead(
             insight_id=r.id,
             insight_type=r.insight_type or "ai_impact",
             priority=r.priority_level,
-            competitor_name=comp_map.get(str(r.competitor_id), "Unknown"),
+            competitor_name=comp_name,
             signal_type=r.signal_type,
             short_title=r.short_title,
+            signal_headline=r.signal_headline,
             visibility_before=r.visibility_before,
             visibility_after=r.visibility_after,
             visibility_delta=delta,
             engine_summary=engine_summary,
             impact_score=r.impact_score,
             correlation_confidence=r.correlation_confidence,
-            summary_text=r.explanation,
+            summary_text=summary_text,
             timestamp=r.created_at,
         ))
     return cards
@@ -740,6 +754,9 @@ def get_insight_detail(
         previous_mentions=r.previous_mentions or [],
         current_mentions=r.current_mentions or [],
         actions=actions,
+        signal_headline=r.signal_headline,
+        confidence_factors=r.confidence_factors,
+        prompt_relevance_score=r.prompt_relevance_score,
     )
 
 

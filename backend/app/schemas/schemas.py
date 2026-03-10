@@ -626,6 +626,7 @@ class AIInsightCompactRead(BaseModel):
     competitor_name: str
     signal_type: str | None
     short_title: str | None
+    signal_headline: str | None  # PROMPT-10: concise 1-line signal description
     visibility_before: int
     visibility_after: int
     visibility_delta: int
@@ -680,6 +681,11 @@ class AIInsightDetailRead(BaseModel):
 
     # H. Actions (links)
     actions: dict[str, str]
+
+    # I. PROMPT-10 additions
+    signal_headline: str | None = None          # concise signal one-liner
+    confidence_factors: dict[str, Any] | None = None  # explainable breakdown
+    prompt_relevance_score: float | None = None  # 0.0-1.0
 
 
 class VisibilityTrendPoint(BaseModel):

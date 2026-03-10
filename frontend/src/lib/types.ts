@@ -507,6 +507,7 @@ export interface AIInsightCompact {
   competitor_name: string;
   signal_type: string | null;
   short_title: string | null;
+  signal_headline: string | null;  // PROMPT-10: concise 1-line signal
   visibility_before: number;
   visibility_after: number;
   visibility_delta: number;
@@ -545,6 +546,18 @@ export interface AIInsightDetail {
   previous_mentions: string[];
   current_mentions: string[];
   actions: Record<string, string>;
+  // PROMPT-10 additions
+  signal_headline: string | null;
+  confidence_factors: {
+    score: number;
+    time_distance_days: number;
+    engines_count: number;
+    visibility_delta: number;
+    prompt_relevance_score: number;
+    signal_type_weight: number;
+    factors_text: string[];
+  } | null;
+  prompt_relevance_score: number | null;
 }
 
 export interface VisibilityTrendPoint {

@@ -1507,3 +1507,333 @@ class TestCoreBrandMatching:
         matched, rank = _brand_in_raw_response("Cursor AI", raw)
         assert matched is True
         assert rank is None
+
+
+# ═══════════════════════════════════════════════
+# 25. PROMPT-10: Prompt-Signal Relevance Scorer
+# ═══════════════════════════════════════════════
+
+
+class TestPromptSignalRelevance:
+    """
+    Tests for compute_prompt_signal_relevance — verifies keyword-based
+    relevance scoring and the always-relevant signal type bypass.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _imports(self):
+        from app.services.ai_visibility.prompt_signal_relevance import (
+            compute_prompt_signal_relevance,
+            PROMPT_SIGNAL_RELEVANCE_THRESHOLD,
+            ALWAYS_RELEVANT_SIGNAL_TYPES,
+        )
+        self.score = compute_prompt_signal_relevance
+        self.threshold = PROMPT_SIGNAL_RELEVANCE_THRESHOLD
+        self.always_relevant = ALWAYS_RELEVANT_SIGNAL_TYPES
+
+    def test_always_relevant_pricing_change(self):
+        """pricing_change is generic — always returns 1.0."""
+        s = self.score("pricing_change", "Raised enterprise price by 30%", "best crm tools 2026")
+        assert s == 1.0
+
+    def test_always_relevant_funding(self):
+        s = self.score("funding", "Series B $50M raised", "best ai code editors")
+        assert s == 1.0
+
+    def test_always_relevant_acquisition(self):
+        s = self.score("acquisition", "Acquired TechCo", "top project management tools")
+        assert s == 1.0
+
+    def test_always_relevant_hiring(self):
+        s = self.score("hiring", "Hiring 200 engineers", "best devops platforms")
+        assert s == 1.0
+
+    def test_relevant_integration_ai_editor_prompt(self):
+        """'integration_added' for AI code editor vs AI editor prompt — should be relevant."""
+        s = self.score(
+            "integration_added",
+            "AI code editor integration with 4 new partners",
+            "best ai code editors for developers",
+            competitor_name="WindSurf AI",
+        )
+        assert s >= self.threshold, f"Expected relevant, got {s}"
+
+    def test_irrelevant_integration_ai_editor_vs_crm_prompt(self):
+        """AI code editor signal vs CRM prompt — should be NOT relevant (keyword mismatch)."""
+        s = self.score(
+            "integration_added",
+            "AI code editor integration with 4 new partners",
+            "best crm tools for sales teams",
+            competitor_name="WindSurf AI",
+        )
+        assert s < self.threshold, f"Expected irrelevant, got {s}"
+
+    def test_irrelevant_blog_post_generic_title_vs_crm_prompt(self):
+        """A generic blog_post title vs unrelated prompt → near-zero relevance."""
+        s = self.score(
+            "blog_post",
+            "Our new blog post about engineering",
+            "best crm tools 2026",
+        )
+        assert s < self.threshold, f"Expected low relevance, got {s}"
+
+    def test_score_in_valid_range(self):
+        """Score must always be between 0 and 1."""
+        for sig_type in ["feature_release", "integration_added", "blog_post", "product_launch"]:
+            s = self.score(sig_type, "Some title here", "some prompt text here")
+            assert 0.0 <= s <= 1.0, f"Score out of range: {s}"
+
+    def test_empty_texts_returns_permissive(self):
+        """Empty signal or prompt → permissive score (0.5)."""
+        s = self.score("feature_release", "", "")
+        assert s == 0.5
+
+    def test_threshold_constant_is_low(self):
+        """Threshold should be ≤0.2 to avoid over-filtering."""
+        assert self.threshold <= 0.2
+
+
+# ═══════════════════════════════════════════════
+# 26. PROMPT-10: New Correlation Engine Helpers
+# ═══════════════════════════════════════════════
+
+
+class TestP10CorrelationHelpers:
+    """
+    Tests for _generate_signal_headline, _generate_summary_text,
+    and _compute_confidence_factors added in PROMPT-10.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _imports(self):
+        from app.services.ai_visibility.correlation_engine import (
+            _generate_signal_headline,
+            _generate_summary_text,
+            _compute_confidence_factors,
+        )
+        self.headline = _generate_signal_headline
+        self.summary = _generate_summary_text
+        self.factors = _compute_confidence_factors
+
+    # ── signal_headline ──────────────────────────────────────────────
+
+    def test_signal_headline_ai_impact_short_title(self):
+        h = self.headline("pricing_change", "Raised prices 30%", "ai_impact")
+        assert h == "Raised prices 30%"
+
+    def test_signal_headline_ai_impact_long_title_truncated(self):
+        long = "A" * 120
+        h = self.headline("feature_release", long, "ai_impact")
+        assert len(h) <= 100
+        assert h.endswith("…")
+
+    def test_signal_headline_hijack_returns_empty(self):
+        h = self.headline("ai_visibility_hijack", "anything", "ai_visibility_hijack")
+        assert h == ""
+
+    def test_signal_headline_loss_returns_empty(self):
+        h = self.headline("ai_visibility_loss", "anything", "ai_visibility_loss")
+        assert h == ""
+
+    def test_signal_headline_dominance_returns_empty(self):
+        h = self.headline("ai_dominance", "anything", "ai_dominance")
+        assert h == ""
+
+    def test_signal_headline_empty_title_uses_type(self):
+        h = self.headline("product_launch", "", "ai_impact")
+        assert "product" in h.lower() or "launch" in h.lower()
+
+    # ── summary_text ─────────────────────────────────────────────────
+
+    def test_summary_text_first_detection(self):
+        s = self.summary("ai_impact", "HubSpot", "pricing_change", ["chatgpt"], 2, 0, 2)
+        assert "HubSpot" in s
+        assert "appeared" in s.lower()
+        assert s.endswith(".")
+
+    def test_summary_text_positive_delta(self):
+        s = self.summary("ai_impact", "HubSpot", "pricing_change", ["chatgpt", "gemini"], 3, 1, 4)
+        assert "+3" in s
+        assert "gained" in s.lower()
+
+    def test_summary_text_negative_delta(self):
+        s = self.summary("ai_impact", "HubSpot", "pricing_change", ["chatgpt"], -2, 3, 1)
+        assert "lost" in s.lower()
+        assert "2" in s
+
+    def test_summary_text_hijack(self):
+        s = self.summary("ai_visibility_hijack", "Cursor AI", "", ["chatgpt", "perplexity"], 2, 0, 2)
+        assert "Cursor AI" in s
+        assert "entered" in s.lower() or "newly" in s.lower()
+        assert s.endswith(".")
+
+    def test_summary_text_loss(self):
+        s = self.summary("ai_visibility_loss", "Cursor AI", "", ["chatgpt"], -1, 1, 0)
+        assert "Cursor AI" in s
+        assert "disappeared" in s.lower()
+        assert s.endswith(".")
+
+    def test_summary_text_dominance(self):
+        s = self.summary("ai_dominance", "Salesforce", "", ["chatgpt", "perplexity", "claude", "gemini"], 4, 0, 4)
+        assert "Salesforce" in s
+        assert "dominates" in s.lower()
+        assert s.endswith(".")
+
+    def test_summary_text_is_single_sentence(self):
+        """Summary must not contain multiple sentences (no mid-text periods)."""
+        for itype, delta, before, after in [
+            ("ai_impact", 2, 0, 2),
+            ("ai_visibility_hijack", 1, 0, 1),
+            ("ai_visibility_loss", -1, 1, 0),
+            ("ai_dominance", 4, 0, 4),
+        ]:
+            s = self.summary(itype, "ACME", "pricing_change", ["chatgpt"], delta, before, after)
+            # Should end with exactly one period and not contain mid-sentence periods
+            stripped = s.rstrip(".")
+            assert "." not in stripped, f"Multi-sentence summary: {s!r}"
+
+    # ── confidence_factors ───────────────────────────────────────────
+
+    def test_confidence_factors_keys(self):
+        f = self.factors(0, "pricing_change", 2, 3, 1.0)
+        for key in ("score", "time_distance_days", "engines_count", "visibility_delta",
+                    "prompt_relevance_score", "signal_type_weight", "factors_text"):
+            assert key in f, f"Missing key: {key}"
+
+    def test_confidence_factors_score_in_range(self):
+        f = self.factors(0, "pricing_change", 2, 3, 1.0)
+        assert 0.0 <= f["score"] <= 100.0
+
+    def test_confidence_factors_same_day_boosts_score(self):
+        same_day = self.factors(0, "pricing_change", 1, 1, 1.0)
+        old = self.factors(14, "pricing_change", 1, 1, 1.0)
+        assert same_day["score"] > old["score"]
+
+    def test_confidence_factors_more_engines_boosts_score(self):
+        one_engine = self.factors(1, "pricing_change", 1, 2, 1.0)
+        four_engines = self.factors(1, "pricing_change", 4, 2, 1.0)
+        assert four_engines["score"] >= one_engine["score"]
+
+    def test_confidence_factors_text_is_list(self):
+        f = self.factors(2, "funding", 3, 5, 0.8)
+        assert isinstance(f["factors_text"], list)
+        assert len(f["factors_text"]) >= 1
+
+    def test_confidence_factors_high_relevance_reflected(self):
+        high = self.factors(1, "feature_release", 2, 2, 1.0)
+        low = self.factors(1, "feature_release", 2, 2, 0.1)
+        assert high["score"] >= low["score"]
+
+
+# ═══════════════════════════════════════════════
+# 27. PROMPT-10: Regression — new fields stored on insights
+# ═══════════════════════════════════════════════
+
+
+class TestP10InsightFields:
+    """
+    End-to-end regression: after running correlation engine, newly created
+    ai_impact insights should have signal_headline, confidence_factors,
+    and prompt_relevance_score populated.
+    """
+
+    def test_ai_impact_insight_has_p10_fields(self, db, workspace, competitor, billing):
+        ws_id = str(workspace.id)
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        tp = AITrackedPrompt(
+            workspace_id=workspace.id,
+            prompt_text="best crm p10 regression",
+            normalized_text=normalize_prompt("best crm p10 regression"),
+            source_type="manual",
+            is_active=True,
+        )
+        db.add(tp)
+        db.flush()
+
+        from app.services.ai_visibility.prompt_execution import run_prompt_globally
+        from app.services.ai_visibility.workspace_filtering import filter_results_for_workspace
+        run_prompt_globally(db, "best crm p10 regression", today)
+        db.commit()
+        filter_results_for_workspace(db, ws_id, today)
+        db.commit()
+
+        ce = CompetitorEvent(
+            workspace_id=workspace.id,
+            competitor_id=competitor.id,
+            signal_type="pricing_change",
+            title="Enterprise pricing raised 25%",
+            source_url="https://hubspot.com/pricing",
+            severity="high",
+        )
+        db.add(ce)
+        db.commit()
+
+        res = client.post(f"/api/workspaces/{ws_id}/ai-visibility/insights/correlate?days=7")
+        assert res.status_code == 200
+
+        insights = db.query(AIImpactInsight).filter(
+            AIImpactInsight.workspace_id == workspace.id,
+            AIImpactInsight.insight_type == "ai_impact",
+        ).all()
+
+        if insights:
+            i = insights[0]
+            assert i.prompt_relevance_score is not None, "prompt_relevance_score should be set"
+            assert 0.0 <= i.prompt_relevance_score <= 1.0
+            assert i.confidence_factors is not None, "confidence_factors should be set"
+            assert "score" in i.confidence_factors
+            assert "factors_text" in i.confidence_factors
+            assert isinstance(i.confidence_factors["factors_text"], list)
+            assert i.signal_headline is not None, "signal_headline should be set"
+            assert len(i.signal_headline) > 0
+
+    def test_compact_card_has_signal_headline_and_summary(self, db, workspace, competitor, billing):
+        """Compact card API response must include signal_headline and one-line summary_text."""
+        ws_id = str(workspace.id)
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        tp = AITrackedPrompt(
+            workspace_id=workspace.id,
+            prompt_text="best crm compact p10 test",
+            normalized_text=normalize_prompt("best crm compact p10 test"),
+            source_type="manual",
+            is_active=True,
+        )
+        db.add(tp)
+        db.flush()
+
+        from app.services.ai_visibility.prompt_execution import run_prompt_globally
+        from app.services.ai_visibility.workspace_filtering import filter_results_for_workspace
+        run_prompt_globally(db, "best crm compact p10 test", today)
+        db.commit()
+        filter_results_for_workspace(db, ws_id, today)
+        db.commit()
+
+        ce = CompetitorEvent(
+            workspace_id=workspace.id,
+            competitor_id=competitor.id,
+            signal_type="pricing_change",
+            title="Launched new starter plan",
+            source_url="https://hubspot.com/plans",
+            severity="medium",
+        )
+        db.add(ce)
+        db.commit()
+
+        client.post(f"/api/workspaces/{ws_id}/ai-visibility/insights/correlate?days=7")
+
+        res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/insights/compact")
+        assert res.status_code == 200
+        cards = res.json()
+
+        ai_impact_cards = [c for c in cards if c["insight_type"] == "ai_impact"]
+        if ai_impact_cards:
+            card = ai_impact_cards[0]
+            assert "signal_headline" in card
+            assert "summary_text" in card
+            if card["summary_text"]:
+                # One-liner: should end with period, no internal paragraph breaks
+                text = card["summary_text"].strip()
+                assert "\n" not in text
+
