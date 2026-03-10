@@ -481,6 +481,14 @@ class PriorityLevel(str, enum.Enum):
     P0 = "P0"
     P1 = "P1"
     P2 = "P2"
+    P3 = "P3"
+
+
+class InsightType(str, enum.Enum):
+    AI_IMPACT = "ai_impact"
+    AI_VISIBILITY_HIJACK = "ai_visibility_hijack"
+    AI_VISIBILITY_LOSS = "ai_visibility_loss"
+    AI_DOMINANCE = "ai_dominance"
 
 
 class AIWorkspaceKeyword(Base):
@@ -629,9 +637,20 @@ class AIImpactInsight(Base):
     engines_affected = Column(ARRAY(String), default=[])
     citations = Column(ARRAY(Text), default=[])
     impact_score = Column(Float, nullable=True)
-    priority_level = Column(String(10), default=PriorityLevel.P2.value)  # P0/P1/P2
+    priority_level = Column(String(10), default=PriorityLevel.P2.value)  # P0/P1/P2/P3
     explanation = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # ── PROMPT-9 additions ──
+    insight_type = Column(String(50), default=InsightType.AI_IMPACT.value, nullable=False)
+    short_title = Column(String(512), nullable=True)
+    correlation_confidence = Column(Float, nullable=True)  # 0-100
+    reasoning = Column(Text, nullable=True)
+    engine_breakdown = Column(JSONB, nullable=True)  # {engine: {rank, mentioned, citation_url}}
+    previous_mentions = Column(ARRAY(String), default=[])
+    current_mentions = Column(ARRAY(String), default=[])
+    prompt_cluster_name = Column(String(255), nullable=True)
+    signal_timestamp = Column(DateTime(timezone=True), nullable=True)
+    visibility_delta = Column(Integer, nullable=True)
 
 
 class WebhookEvent(Base):

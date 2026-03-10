@@ -487,6 +487,64 @@ export interface AIImpactInsight {
   priority_level: string;
   explanation: string | null;
   created_at: string;
+  // PROMPT-9 additions
+  insight_type: string;
+  short_title: string | null;
+  correlation_confidence: number | null;
+  reasoning: string | null;
+  engine_breakdown: Record<string, { rank: number | null; mentioned: boolean; citation_url: string | null }> | null;
+  previous_mentions: string[];
+  current_mentions: string[];
+  prompt_cluster_name: string | null;
+  signal_timestamp: string | null;
+  visibility_delta: number | null;
+}
+
+export interface AIInsightCompact {
+  insight_id: string;
+  insight_type: string;
+  priority: string;
+  competitor_name: string;
+  signal_type: string | null;
+  short_title: string | null;
+  visibility_before: number;
+  visibility_after: number;
+  visibility_delta: number;
+  engine_summary: string;
+  impact_score: number | null;
+  correlation_confidence: number | null;
+  summary_text: string | null;
+  timestamp: string;
+}
+
+export interface AIInsightDetail {
+  insight_id: string;
+  insight_type: string;
+  competitor_name: string;
+  competitor_id: string;
+  priority: string;
+  impact_score: number | null;
+  correlation_confidence: number | null;
+  signal_type: string | null;
+  timestamp: string;
+  signal_title: string | null;
+  signal_timestamp: string | null;
+  signal_event_id: string | null;
+  prompt_text: string | null;
+  prompt_cluster_name: string | null;
+  prompt_source: string | null;
+  prompt_run_timestamp: string | null;
+  visibility_before: number;
+  visibility_after: number;
+  visibility_delta: number;
+  engines_detected: string[];
+  engine_breakdown: Record<string, { rank: number | null; mentioned: boolean; citation_url: string | null }> | null;
+  citations: Record<string, string[]>;
+  reasoning: string | null;
+  explanation: string | null;
+  previous_mentions: string[];
+  current_mentions: string[];
+  actions: Record<string, string>;
 }
 
 export interface VisibilityTrendPoint {

@@ -36,6 +36,8 @@ import type {
   AITrackedPrompt,
   AIVisibilityEvent,
   AIImpactInsight,
+  AIInsightCompact,
+  AIInsightDetail,
   VisibilityTrendsData,
   PromptLimits,
   RunPromptsResponse,
@@ -485,13 +487,24 @@ export const aiVisibility = {
   },
 
   // Impact Insights
-  listInsights: (wsId: string, competitorId?: string, priority?: string) => {
+  listInsights: (wsId: string, competitorId?: string, priority?: string, insightType?: string) => {
     const qs = new URLSearchParams();
     if (competitorId) qs.set("competitor_id", competitorId);
     if (priority) qs.set("priority", priority);
+    if (insightType) qs.set("insight_type", insightType);
     const q = qs.toString();
     return request<AIImpactInsight[]>(`/api/workspaces/${wsId}/ai-visibility/insights${q ? `?${q}` : ""}`);
   },
+  listInsightsCompact: (wsId: string, competitorId?: string, priority?: string, insightType?: string) => {
+    const qs = new URLSearchParams();
+    if (competitorId) qs.set("competitor_id", competitorId);
+    if (priority) qs.set("priority", priority);
+    if (insightType) qs.set("insight_type", insightType);
+    const q = qs.toString();
+    return request<AIInsightCompact[]>(`/api/workspaces/${wsId}/ai-visibility/insights/compact${q ? `?${q}` : ""}`);
+  },
+  getInsightDetail: (wsId: string, insightId: string) =>
+    request<AIInsightDetail>(`/api/workspaces/${wsId}/ai-visibility/insights/${insightId}`),
   runCorrelation: (wsId: string, days = 7) =>
     request<{ insights_created: number }>(`/api/workspaces/${wsId}/ai-visibility/insights/correlate?days=${days}`, { method: "POST" }),
 };
