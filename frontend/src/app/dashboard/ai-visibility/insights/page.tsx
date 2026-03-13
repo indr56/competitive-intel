@@ -18,6 +18,8 @@ import {
   Crown,
   TrendingUp,
   ChevronRight,
+  CheckCircle,
+  Info,
 } from "lucide-react";
 import { useActiveWorkspace, useFetch } from "@/lib/hooks";
 import { aiVisibility, competitors as competitorsApi } from "@/lib/api";
@@ -275,7 +277,14 @@ function CompactInsightCard({ card, onOpen }: { card: AIInsightCompact; onOpen: 
 
       {/* Row 2: Short title */}
       {card.short_title && (
-        <p className="text-sm font-medium text-gray-700 mb-1.5 truncate">{card.short_title}</p>
+        <p className="text-sm font-medium text-gray-700 mb-1 truncate">{card.short_title}</p>
+      )}
+
+      {/* Row 2b: Signal headline (PROMPT-10) */}
+      {card.signal_headline && card.signal_headline !== card.short_title && (
+        <p className="text-xs text-gray-500 mb-1.5 truncate">
+          <span className="text-gray-400">Signal: </span>{card.signal_headline}
+        </p>
       )}
 
       {/* Row 3: Visibility + Engines + Confidence */}
@@ -300,9 +309,9 @@ function CompactInsightCard({ card, onOpen }: { card: AIInsightCompact; onOpen: 
         )}
       </div>
 
-      {/* Row 4: Summary */}
+      {/* Row 4: One-line summary (PROMPT-10) */}
       {card.summary_text && (
-        <p className="text-[11px] text-gray-500 mt-2 line-clamp-2 leading-relaxed">{card.summary_text}</p>
+        <p className="text-[11px] text-gray-500 mt-2 line-clamp-1 leading-relaxed">{card.summary_text}</p>
       )}
 
       {/* Timestamp */}
@@ -387,12 +396,47 @@ function DetailContent({ detail: d }: { detail: AIInsightDetail }) {
         </div>
       </div>
 
-      {/* B. Signal Context */}
+      {/* B. Confidence Factors (PROMPT-10) */}
+      {d.confidence_factors && (
+        <Section title="Confidence Breakdown">
+          <div className="rounded-lg bg-gray-50 border px-4 py-3 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-gray-500 font-medium">Correlation Confidence</span>
+              <span className="font-bold text-gray-800">{d.confidence_factors.score}%</span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-1.5">
+              <div
+                className={`h-1.5 rounded-full ${d.confidence_factors.score >= 70 ? "bg-green-500" : d.confidence_factors.score >= 50 ? "bg-amber-400" : "bg-red-400"}`}
+                style={{ width: `${d.confidence_factors.score}%` }}
+              />
+            </div>
+            <ul className="space-y-1 pt-1">
+              {d.confidence_factors.factors_text.map((f, i) => (
+                <li key={i} className="flex items-start gap-1.5 text-xs text-gray-600">
+                  <CheckCircle className="h-3 w-3 text-green-500 mt-0.5 flex-shrink-0" />
+                  {f}
+                </li>
+              ))}
+            </ul>
+            {d.prompt_relevance_score != null && (
+              <div className="flex items-center gap-1.5 pt-1 border-t text-xs text-gray-500">
+                <Info className="h-3 w-3" />
+                Prompt relevance: <strong className="text-gray-700">{(d.prompt_relevance_score * 100).toFixed(0)}%</strong>
+              </div>
+            )}
+          </div>
+        </Section>
+      )}
+
+      {/* C. Signal Context */}
       {d.signal_title && (
         <Section title="Signal Context">
           <div className="flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 flex-shrink-0" />
             <div>
+              {d.signal_headline && d.signal_headline !== d.signal_title && (
+                <p className="text-xs font-semibold text-gray-500 mb-0.5">{d.signal_headline}</p>
+              )}
               <p className="text-sm font-medium text-gray-700">{d.signal_title}</p>
               {d.signal_type && (
                 <p className="text-xs text-gray-400 mt-0.5">Type: {d.signal_type.replace(/_/g, " ")}</p>

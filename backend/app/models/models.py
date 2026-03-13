@@ -651,6 +651,10 @@ class AIImpactInsight(Base):
     prompt_cluster_name = Column(String(255), nullable=True)
     signal_timestamp = Column(DateTime(timezone=True), nullable=True)
     visibility_delta = Column(Integer, nullable=True)
+    # ── PROMPT-10 additions ──
+    signal_headline = Column(String(200), nullable=True)          # concise 1-line signal for compact card
+    confidence_factors = Column(JSONB, nullable=True)             # explainable breakdown: {score, factors_text, ...}
+    prompt_relevance_score = Column(Float, nullable=True)         # 0.0-1.0 semantic signal↔prompt fit
 
 
 class WebhookEvent(Base):

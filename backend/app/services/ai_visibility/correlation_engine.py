@@ -7,12 +7,12 @@ PROMPT-9 upgrade: now produces four insight types:
   3. ai_visibility_loss   — competitor disappears from AI responses
   4. ai_dominance         — competitor appears across ALL engines
 
-Also computes:
-  - correlation_confidence (0-100)
-  - structured reasoning
-  - engine_breakdown per-engine detail
-  - previous_mentions / current_mentions evidence
-  - short_title for compact cards
+PROMPT-10 upgrade:
+  - signal_headline      — concise 1-line signal description for compact card
+  - summary_text         — one-liner insight summary (replaces paragraph in compact card)
+  - confidence_factors   — explainable breakdown of confidence score
+  - prompt_relevance_score — semantic signal↔prompt relevance (0-1)
+  - Relevance filtering  — skips signal-prompt pairs below threshold to prevent false correlations
 
 Key design decisions:
 - Uses date-only comparison (not datetime) to avoid same-day timing artifacts
@@ -43,6 +43,10 @@ from app.models.models import (
     InsightType,
     PriorityLevel,
     RunStatusEnum,
+)
+from app.services.ai_visibility.prompt_signal_relevance import (
+    compute_prompt_signal_relevance,
+    PROMPT_SIGNAL_RELEVANCE_THRESHOLD,
 )
 
 logger = logging.getLogger(__name__)
@@ -180,6 +184,79 @@ def _compute_correlation_confidence(
     return round(max(0.0, min(100.0, score)), 0)
 
 
+def _compute_confidence_factors(
+    days_since_signal: int,
+    signal_type: str,
+    engines_affected_count: int,
+    visibility_delta: int,
+    prompt_relevance_score: float = 1.0,
+) -> dict:
+    """
+    Compute confidence score AND return an explainable factors dict.
+    Returned dict: {score, time_distance_days, engines_count, visibility_delta,
+                    prompt_relevance_score, signal_type_weight, factors_text}
+    """
+    score = 50.0
+    factors_text: list[str] = []
+
+    # Time distance
+    if days_since_signal <= 1:
+        score += 25
+        factors_text.append(
+            f"Signal detected within {'same day' if days_since_signal == 0 else '1 day'} of visibility change"
+        )
+    elif days_since_signal <= 3:
+        score += 15
+        factors_text.append(f"Signal detected {days_since_signal} days before visibility change")
+    elif days_since_signal <= 7:
+        score += 5
+        factors_text.append(f"Signal detected {days_since_signal} days before visibility change")
+    else:
+        score -= 10
+        factors_text.append(
+            f"Signal detected {days_since_signal} days ago (weaker time correlation)"
+        )
+
+    # Signal type weight
+    type_weight = SIGNAL_TYPE_WEIGHTS.get(signal_type, 0.8)
+    score += (type_weight - 0.8) * 20
+    if type_weight >= 1.3:
+        factors_text.append(
+            f"High-impact signal type: {signal_type.replace('_', ' ')}"
+        )
+
+    # Engines
+    score += min(engines_affected_count * 5, 20)
+    factors_text.append(
+        f"{engines_affected_count} AI engine{'s' if engines_affected_count != 1 else ''} confirmed visibility change"
+    )
+
+    # Delta magnitude
+    score += min(abs(visibility_delta) * 3, 15)
+
+    # Prompt relevance contribution
+    relevance_boost = (prompt_relevance_score - 0.5) * 10
+    score += relevance_boost
+    if prompt_relevance_score >= 0.7:
+        factors_text.append(f"Prompt relevance score: {prompt_relevance_score:.2f} (high)")
+    elif prompt_relevance_score < 0.3:
+        factors_text.append(f"Prompt relevance score: {prompt_relevance_score:.2f} (low)")
+    else:
+        factors_text.append(f"Prompt relevance score: {prompt_relevance_score:.2f}")
+
+    score = round(max(0.0, min(100.0, score)), 0)
+
+    return {
+        "score": score,
+        "time_distance_days": days_since_signal,
+        "engines_count": engines_affected_count,
+        "visibility_delta": visibility_delta,
+        "prompt_relevance_score": round(prompt_relevance_score, 3),
+        "signal_type_weight": type_weight,
+        "factors_text": factors_text,
+    }
+
+
 def _generate_short_title(
     insight_type: str,
     competitor_name: str,
@@ -199,6 +276,61 @@ def _generate_short_title(
     elif sig_label:
         return f"{sig_label}: {competitor_name}"
     return f"Visibility change: {competitor_name}"
+
+
+def _generate_signal_headline(
+    signal_type: str,
+    signal_title: str,
+    insight_type: str,
+) -> str:
+    """
+    Generate a concise one-line signal headline for the compact card.
+    For non-signal insights (hijack/loss/dominance) returns an empty string.
+    """
+    if insight_type != InsightType.AI_IMPACT.value:
+        return ""
+    if not signal_title:
+        return signal_type.replace("_", " ").title() if signal_type else ""
+    # Truncate to first sentence if ≤100 chars, else hard truncate
+    first = signal_title.split(".")[0].strip()
+    if len(first) <= 100:
+        return first
+    if len(signal_title) <= 100:
+        return signal_title
+    return signal_title[:97] + "…"
+
+
+def _generate_summary_text(
+    insight_type: str,
+    competitor_name: str,
+    signal_type: str,
+    engines_affected: list[str],
+    visibility_delta: int,
+    visibility_before: int,
+    visibility_after: int,
+) -> str:
+    """
+    Generate a one-line summary for the compact card.
+    Maximum one sentence — no paragraphs.
+    """
+    eng_count = len(engines_affected)
+    eng_plural = "engine" if eng_count == 1 else "engines"
+    sig_label = (signal_type or "").replace("_", " ")
+
+    if insight_type == InsightType.AI_VISIBILITY_HIJACK.value:
+        return f"{competitor_name} newly entered AI responses across {eng_count} {eng_plural}."
+    elif insight_type == InsightType.AI_VISIBILITY_LOSS.value:
+        return f"{competitor_name} disappeared from AI responses ({eng_count} {eng_plural} previously)."
+    elif insight_type == InsightType.AI_DOMINANCE.value:
+        return f"{competitor_name} now dominates all {eng_count} AI {eng_plural}."
+    else:
+        # ai_impact
+        if visibility_before == 0 and visibility_after > 0:
+            return f"{competitor_name} appeared in AI responses after {sig_label}."
+        elif visibility_delta > 0:
+            return f"{competitor_name} gained +{visibility_delta} AI mentions after {sig_label}."
+        else:
+            return f"{competitor_name} lost {abs(visibility_delta)} AI mentions after {sig_label}."
 
 
 def _generate_explanation(
@@ -461,16 +593,28 @@ def correlate_signals_with_visibility(
                 cluster_name = _get_prompt_cluster_name(db, tp)
                 scored_signals = []
                 for sig_id, sig_type, sig_title, sig_time in signals:
+                    # Prompt-signal relevance filter (PROMPT-10)
+                    relevance_score = compute_prompt_signal_relevance(
+                        sig_type, sig_title, tp.prompt_text, comp.name
+                    )
+                    if relevance_score < PROMPT_SIGNAL_RELEVANCE_THRESHOLD:
+                        logger.debug(
+                            "Skipping signal '%s' (%s) for prompt '%s' — relevance %.3f < %.2f",
+                            sig_title[:50], sig_type, tp.prompt_text[:50],
+                            relevance_score, PROMPT_SIGNAL_RELEVANCE_THRESHOLD,
+                        )
+                        continue
+
                     type_weight = SIGNAL_TYPE_WEIGHTS.get(sig_type, 0.8)
                     days_ago = max((now - sig_time).days, 0)
                     recency = 1.0 / (1 + days_ago * 0.15)
-                    relevance = type_weight * recency
-                    scored_signals.append((relevance, sig_id, sig_type, sig_title, sig_time))
+                    signal_score = type_weight * recency
+                    scored_signals.append((signal_score, relevance_score, sig_id, sig_type, sig_title, sig_time))
 
                 scored_signals.sort(key=lambda x: x[0], reverse=True)
                 top_signals = scored_signals[:MAX_INSIGHTS_PER_COMP_PROMPT]
 
-                for relevance, signal_id, signal_type, signal_title, signal_time in top_signals:
+                for signal_score, prompt_relevance, signal_id, signal_type, signal_title, signal_time in top_signals:
                     signal_date = _normalize_to_date(signal_time)
                     before_start = signal_date - timedelta(days=days)
                     after_end = signal_date + timedelta(days=days)
@@ -544,9 +688,11 @@ def correlate_signals_with_visibility(
                         continue
 
                     priority = _compute_priority(impact_score)
-                    confidence = _compute_correlation_confidence(
+                    conf_factors = _compute_confidence_factors(
                         days_since, signal_type, len(engines_affected), delta,
+                        prompt_relevance,
                     )
+                    confidence = conf_factors["score"]
 
                     explanation = _generate_explanation(
                         comp.name, signal_title, signal_type,
@@ -560,6 +706,13 @@ def correlate_signals_with_visibility(
                     short_title = _generate_short_title(
                         InsightType.AI_IMPACT.value, comp.name,
                         signal_type, signal_title,
+                    )
+                    signal_headline = _generate_signal_headline(
+                        signal_type, signal_title, InsightType.AI_IMPACT.value,
+                    )
+                    summary_text = _generate_summary_text(
+                        InsightType.AI_IMPACT.value, comp.name, signal_type,
+                        engines_affected, delta, before_count, after_count,
                     )
                     engine_breakdown = _get_engine_breakdown(
                         db, comp.id, tp.id, before_start, after_end,
@@ -594,6 +747,9 @@ def correlate_signals_with_visibility(
                         explanation=explanation,
                         reasoning=reasoning,
                         short_title=short_title,
+                        signal_headline=signal_headline,
+                        confidence_factors=conf_factors,
+                        prompt_relevance_score=prompt_relevance,
                         engine_breakdown=engine_breakdown,
                         previous_mentions=prev_mentions,
                         current_mentions=curr_mentions,
