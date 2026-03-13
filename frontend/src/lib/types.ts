@@ -516,6 +516,8 @@ export interface AIInsightCompact {
   correlation_confidence: number | null;
   summary_text: string | null;
   timestamp: string;
+  // PROMPT-11
+  strategy_actions: string[] | null;
 }
 
 export interface AIInsightDetail {
@@ -558,6 +560,50 @@ export interface AIInsightDetail {
     factors_text: string[];
   } | null;
   prompt_relevance_score: number | null;
+  // PROMPT-11 additions
+  strategy_actions: string[] | null;
+  influential_sources: {
+    domain: string;
+    url: string;
+    score: number;
+    engines: string[];
+    count: number;
+  }[] | null;
+  category_data: {
+    category_id: string;
+    category_name: string;
+    prompt_count: number;
+    total_mentions: number;
+    competitors: {
+      competitor_id: string;
+      competitor_name: string;
+      visibility_share: number;
+      mentions: number;
+      engine_count: number;
+    }[];
+  } | null;
+}
+
+// PROMPT-11: Prompt Categories
+export interface PromptCategory {
+  id: string;
+  workspace_id: string;
+  category_name: string;
+  description: string | null;
+  created_at: string;
+}
+
+export interface CategoryVisibility {
+  id: string;
+  workspace_id: string;
+  category_id: string;
+  competitor_id: string;
+  visibility_share: number;
+  engine_count: number;
+  prompt_count: number;
+  total_mentions: number;
+  time_window: string | null;
+  computed_at: string;
 }
 
 export interface VisibilityTrendPoint {

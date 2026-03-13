@@ -489,6 +489,10 @@ class InsightType(str, enum.Enum):
     AI_VISIBILITY_HIJACK = "ai_visibility_hijack"
     AI_VISIBILITY_LOSS = "ai_visibility_loss"
     AI_DOMINANCE = "ai_dominance"
+    # PROMPT-11 additions
+    AI_STRATEGY_ALERT = "ai_strategy_alert"
+    AI_CITATION_INFLUENCE = "ai_citation_influence"
+    AI_CATEGORY_OWNERSHIP = "ai_category_ownership"
 
 
 class AIWorkspaceKeyword(Base):
@@ -536,11 +540,13 @@ class AITrackedPrompt(Base):
     normalized_text = Column(String(512), nullable=False)
     source_type = Column(String(50), nullable=False)
     cluster_id = Column(UUID(as_uuid=True), ForeignKey("ai_prompt_clusters.id", ondelete="SET NULL"), nullable=True)
+    category_id = Column(UUID(as_uuid=True), ForeignKey("prompt_categories.id", ondelete="SET NULL"), nullable=True)  # PROMPT-11: optional
     is_active = Column(Boolean, default=True)
     last_run_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     cluster = relationship("AIPromptCluster", back_populates="tracked_prompts")
+    category = relationship("PromptCategory", back_populates="tracked_prompts")
     visibility_events = relationship("AIVisibilityEvent", back_populates="tracked_prompt", cascade="all, delete-orphan")
 
 
@@ -655,6 +661,61 @@ class AIImpactInsight(Base):
     signal_headline = Column(String(200), nullable=True)          # concise 1-line signal for compact card
     confidence_factors = Column(JSONB, nullable=True)             # explainable breakdown: {score, factors_text, ...}
     prompt_relevance_score = Column(Float, nullable=True)         # 0.0-1.0 semantic signal↔prompt fit
+    # ── PROMPT-11 additions ──
+    strategy_actions = Column(JSONB, nullable=True)               # recommended actions for strategy alerts
+    influential_sources = Column(JSONB, nullable=True)            # citation influence sources
+    category_data = Column(JSONB, nullable=True)                  # category ownership data
+
+
+# ── PROMPT-11: Prompt Categories ──
+
+
+class PromptCategory(Base):
+    """Optional grouping for tracked prompts to support category ownership."""
+    __tablename__ = "prompt_categories"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "category_name", name="uq_prompt_category_ws_name"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    category_name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    tracked_prompts = relationship("AITrackedPrompt", back_populates="category")
+
+
+class PromptEngineCitation(Base):
+    """Citation URL extracted from an AI engine response."""
+    __tablename__ = "prompt_engine_citations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    prompt_run_id = Column(UUID(as_uuid=True), ForeignKey("ai_prompt_runs.id", ondelete="CASCADE"), nullable=False)
+    engine = Column(String(50), nullable=False)
+    competitor_id = Column(UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=True)
+    citation_url = Column(Text, nullable=False)
+    citation_domain = Column(String(255), nullable=True)
+    citation_context = Column(Text, nullable=True)
+    rank = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class CategoryVisibility(Base):
+    """Computed visibility share for a competitor within a prompt category."""
+    __tablename__ = "category_visibility"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id = Column(UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    category_id = Column(UUID(as_uuid=True), ForeignKey("prompt_categories.id", ondelete="CASCADE"), nullable=False)
+    competitor_id = Column(UUID(as_uuid=True), ForeignKey("competitors.id", ondelete="CASCADE"), nullable=False)
+    visibility_share = Column(Float, nullable=False, default=0)
+    engine_count = Column(Integer, nullable=False, default=0)
+    prompt_count = Column(Integer, nullable=False, default=0)
+    total_mentions = Column(Integer, nullable=False, default=0)
+    time_window = Column(String(50), nullable=True)
+    computed_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class WebhookEvent(Base):

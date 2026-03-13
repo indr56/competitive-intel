@@ -31,7 +31,10 @@ from app.models.models import (
     AITrackedPrompt,
     AIVisibilityEvent,
     AIWorkspaceKeyword,
+    CategoryVisibility,
     Competitor,
+    PromptCategory,
+    PromptEngineCitation,
     PromptSourceType,
     PromptStatusEnum,
     Workspace,
@@ -51,8 +54,12 @@ from app.schemas.schemas import (
     AIPromptSourceRead,
     AITrackedPromptRead,
     AIVisibilityEventRead,
+    CategoryVisibilityRead,
     GenerateSuggestionsRequest,
     GenerateSuggestionsResponse,
+    PromptCategoryCreate,
+    PromptCategoryRead,
+    PromptEngineCitationRead,
     RunPromptsRequest,
     RunPromptsResponse,
     VisibilityTrendPoint,
@@ -665,6 +672,7 @@ def list_insights_compact(
             correlation_confidence=r.correlation_confidence,
             summary_text=summary_text,
             timestamp=r.created_at,
+            strategy_actions=r.strategy_actions,
         ))
     return cards
 
@@ -757,6 +765,9 @@ def get_insight_detail(
         signal_headline=r.signal_headline,
         confidence_factors=r.confidence_factors,
         prompt_relevance_score=r.prompt_relevance_score,
+        strategy_actions=r.strategy_actions,
+        influential_sources=r.influential_sources,
+        category_data=r.category_data,
     )
 
 
@@ -826,3 +837,169 @@ def get_run_results(
         .order_by(AIEngineResult.engine)
         .all()
     )
+
+
+# ═══════════════════════════════════════════════
+# PROMPT-11: Prompt Categories (optional, backward compatible)
+# ═══════════════════════════════════════════════
+
+
+@router.get(
+    "/api/workspaces/{workspace_id}/ai-visibility/categories",
+    response_model=list[PromptCategoryRead],
+)
+def list_prompt_categories(
+    workspace_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    """List all prompt categories for a workspace."""
+    _check_ws(db, workspace_id)
+    return (
+        db.query(PromptCategory)
+        .filter(PromptCategory.workspace_id == workspace_id)
+        .order_by(PromptCategory.category_name)
+        .all()
+    )
+
+
+@router.post(
+    "/api/workspaces/{workspace_id}/ai-visibility/categories",
+    response_model=PromptCategoryRead,
+    status_code=201,
+)
+def create_prompt_category(
+    workspace_id: uuid.UUID,
+    body: PromptCategoryCreate,
+    db: Session = Depends(get_db),
+):
+    """Create a new prompt category."""
+    _check_ws(db, workspace_id)
+    existing = (
+        db.query(PromptCategory)
+        .filter(
+            PromptCategory.workspace_id == workspace_id,
+            PromptCategory.category_name == body.category_name,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(409, f"Category '{body.category_name}' already exists")
+
+    cat = PromptCategory(
+        workspace_id=workspace_id,
+        category_name=body.category_name,
+        description=body.description,
+    )
+    db.add(cat)
+    db.commit()
+    db.refresh(cat)
+    return cat
+
+
+@router.delete(
+    "/api/workspaces/{workspace_id}/ai-visibility/categories/{category_id}",
+    status_code=204,
+)
+def delete_prompt_category(
+    workspace_id: uuid.UUID,
+    category_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    """Delete a prompt category. Prompts are NOT deleted, just unlinked."""
+    _check_ws(db, workspace_id)
+    cat = (
+        db.query(PromptCategory)
+        .filter(
+            PromptCategory.id == category_id,
+            PromptCategory.workspace_id == workspace_id,
+        )
+        .first()
+    )
+    if not cat:
+        raise HTTPException(404, "Category not found")
+    db.delete(cat)
+    db.commit()
+
+
+@router.put(
+    "/api/workspaces/{workspace_id}/ai-visibility/prompts/{prompt_id}/category",
+)
+def assign_prompt_category(
+    workspace_id: uuid.UUID,
+    prompt_id: uuid.UUID,
+    category_id: uuid.UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """Assign or remove a prompt's category. Pass category_id=null to uncategorize."""
+    _check_ws(db, workspace_id)
+    tp = (
+        db.query(AITrackedPrompt)
+        .filter(
+            AITrackedPrompt.id == prompt_id,
+            AITrackedPrompt.workspace_id == workspace_id,
+        )
+        .first()
+    )
+    if not tp:
+        raise HTTPException(404, "Tracked prompt not found")
+
+    if category_id:
+        cat = db.query(PromptCategory).filter(
+            PromptCategory.id == category_id,
+            PromptCategory.workspace_id == workspace_id,
+        ).first()
+        if not cat:
+            raise HTTPException(404, "Category not found")
+
+    tp.category_id = category_id
+    db.commit()
+    return {"prompt_id": str(prompt_id), "category_id": str(category_id) if category_id else None}
+
+
+# ═══════════════════════════════════════════════
+# PROMPT-11: Citations
+# ═══════════════════════════════════════════════
+
+
+@router.get(
+    "/api/workspaces/{workspace_id}/ai-visibility/citations",
+    response_model=list[PromptEngineCitationRead],
+)
+def list_citations(
+    workspace_id: uuid.UUID,
+    engine: str | None = Query(default=None),
+    limit: int = Query(default=100, le=500),
+    db: Session = Depends(get_db),
+):
+    """List extracted citations for this workspace."""
+    _check_ws(db, workspace_id)
+    q = db.query(PromptEngineCitation).filter(
+        PromptEngineCitation.workspace_id == workspace_id,
+    )
+    if engine:
+        q = q.filter(PromptEngineCitation.engine == engine)
+    return q.order_by(PromptEngineCitation.created_at.desc()).limit(limit).all()
+
+
+# ═══════════════════════════════════════════════
+# PROMPT-11: Category Visibility
+# ═══════════════════════════════════════════════
+
+
+@router.get(
+    "/api/workspaces/{workspace_id}/ai-visibility/category-visibility",
+    response_model=list[CategoryVisibilityRead],
+)
+def list_category_visibility(
+    workspace_id: uuid.UUID,
+    category_id: uuid.UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """List computed category visibility shares."""
+    _check_ws(db, workspace_id)
+    q = db.query(CategoryVisibility).filter(
+        CategoryVisibility.workspace_id == workspace_id,
+    )
+    if category_id:
+        q = q.filter(CategoryVisibility.category_id == category_id)
+    return q.order_by(CategoryVisibility.visibility_share.desc()).all()
