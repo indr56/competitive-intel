@@ -88,6 +88,18 @@ from app.services.ai_visibility.citation_influence import (
 from app.services.ai_visibility.category_ownership import (
     compute_category_ownership,
 )
+from app.services.ai_visibility.share_of_voice import (
+    generate_share_of_voice_insights,
+    SOV_THRESHOLD,
+)
+from app.services.ai_visibility.narrative_analysis import (
+    _extract_descriptors,
+    generate_narrative_insights,
+)
+from app.services.ai_visibility.optimization_playbooks import (
+    generate_optimization_playbooks,
+    PLAYBOOK_PRIORITY_THRESHOLD,
+)
 
 # ── Test DB setup ──
 
@@ -2841,4 +2853,406 @@ class TestP13BackwardCompatibility:
         assert any(c["id"] == cat_id for c in r2.json())
         r3 = client.delete(f"/api/workspaces/{ws_id}/ai-visibility/categories/{cat_id}")
         assert r3.status_code == 204
+
+
+# ══════════════════════════════════════════════════════════════════
+# PROMPT-14 Tests
+# ══════════════════════════════════════════════════════════════════
+
+
+class TestP14InsightTypeEnums:
+    """P14: Verify new InsightType enum values exist and are usable."""
+
+    def test_share_of_voice_enum(self):
+        assert InsightType.AI_SHARE_OF_VOICE.value == "ai_share_of_voice"
+
+    def test_narrative_enum(self):
+        assert InsightType.AI_NARRATIVE.value == "ai_narrative"
+
+    def test_playbook_enum(self):
+        assert InsightType.AI_OPTIMIZATION_PLAYBOOK.value == "ai_optimization_playbook"
+
+    def test_all_p14_enums_are_strings(self):
+        for it in [InsightType.AI_SHARE_OF_VOICE, InsightType.AI_NARRATIVE, InsightType.AI_OPTIMIZATION_PLAYBOOK]:
+            assert isinstance(it.value, str)
+
+    def test_existing_enums_untouched(self):
+        """Backward compat: all pre-P14 enums still exist."""
+        assert InsightType.AI_IMPACT.value == "ai_impact"
+        assert InsightType.AI_VISIBILITY_HIJACK.value == "ai_visibility_hijack"
+        assert InsightType.AI_VISIBILITY_LOSS.value == "ai_visibility_loss"
+        assert InsightType.AI_DOMINANCE.value == "ai_dominance"
+        assert InsightType.AI_STRATEGY_ALERT.value == "ai_strategy_alert"
+        assert InsightType.AI_CITATION_INFLUENCE.value == "ai_citation_influence"
+        assert InsightType.AI_CATEGORY_OWNERSHIP.value == "ai_category_ownership"
+
+
+class TestP14NarrativeExtraction:
+    """P14: Unit tests for narrative descriptor extraction."""
+
+    def test_extract_is_pattern(self):
+        text = "Cursor AI is the best AI coding assistant for developers."
+        result = _extract_descriptors(text, "Cursor AI")
+        assert len(result) > 0
+        assert any("best ai coding assistant" in d for d in result)
+
+    def test_extract_are_pattern(self):
+        text = "Cursor AI are known for being developer friendly."
+        result = _extract_descriptors(text, "Cursor AI")
+        assert len(result) > 0
+
+    def test_extract_no_match(self):
+        text = "The weather is nice today."
+        result = _extract_descriptors(text, "Cursor AI")
+        assert len(result) == 0
+
+    def test_extract_short_descriptor_excluded(self):
+        text = "Cursor AI is ok."
+        result = _extract_descriptors(text, "Cursor AI")
+        # "ok" is too short (< 5 chars)
+        assert len(result) == 0
+
+    def test_extract_max_5_descriptors(self):
+        text = ". ".join(
+            [f"Cursor AI is great tool number {i} for devs" for i in range(10)]
+        )
+        result = _extract_descriptors(text, "Cursor AI")
+        assert len(result) <= 5
+
+    def test_extract_deduplicates(self):
+        text = "Cursor AI is the best editor. Also Cursor AI is the best editor."
+        result = _extract_descriptors(text, "Cursor AI")
+        # Should deduplicate
+        assert len(result) == len(set(result))
+
+
+class TestP14ShareOfVoice:
+    """P14: Share of Voice insight generation."""
+
+    def test_sov_no_categories_returns_zero(self, db, workspace, billing):
+        count = generate_share_of_voice_insights(db, str(workspace.id))
+        assert count == 0
+
+    def test_sov_with_category_and_visibility_data(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+
+        # Create competitor
+        comp = Competitor(workspace_id=workspace.id, name="SoV TestCo", domain="sovtest.com", is_active=True)
+        db.add(comp)
+        db.flush()
+
+        # Create category + prompt
+        cat = PromptCategory(workspace_id=workspace.id, category_name="SoV Cat")
+        db.add(cat)
+        db.flush()
+
+        tp = AITrackedPrompt(
+            workspace_id=workspace.id, prompt_text="sov test prompt",
+            normalized_text="sov test prompt", source_type="manual",
+            category_id=cat.id, is_active=True,
+        )
+        db.add(tp)
+        db.flush()
+
+        # Create prompt run + engine result + visibility events
+        run = AIPromptRun(prompt_text="sov test prompt", normalized_text="sov test prompt",
+                          run_date=datetime.now(timezone.utc), status=RunStatusEnum.COMPLETED.value)
+        db.add(run)
+        db.flush()
+
+        er = AIEngineResult(prompt_run_id=run.id, engine="chatgpt",
+                            status=RunStatusEnum.COMPLETED.value,
+                            raw_response="SoV TestCo is great", mentioned_brands=["SoV TestCo"])
+        db.add(er)
+        db.flush()
+
+        # Add enough visibility events for this competitor to exceed threshold
+        for i in range(5):
+            db.add(AIVisibilityEvent(
+                workspace_id=workspace.id, competitor_id=comp.id,
+                tracked_prompt_id=tp.id, engine_result_id=er.id,
+                engine="chatgpt", mentioned=True,
+                event_date=datetime.now(timezone.utc) - timedelta(hours=i),
+            ))
+        db.flush()
+
+        count = generate_share_of_voice_insights(db, ws_id)
+        db.flush()
+        # Should generate at least one SoV insight since this competitor has 100% share
+        assert count >= 1
+
+        # Verify insight type
+        sov_insights = db.query(AIImpactInsight).filter(
+            AIImpactInsight.workspace_id == workspace.id,
+            AIImpactInsight.insight_type == InsightType.AI_SHARE_OF_VOICE.value,
+        ).all()
+        assert len(sov_insights) >= 1
+        assert "SoV TestCo" in sov_insights[0].signal_title
+        assert sov_insights[0].category_data is not None
+        assert "share_of_voice" in sov_insights[0].category_data
+
+    def test_sov_threshold_constant(self):
+        assert SOV_THRESHOLD == 15.0
+
+
+class TestP14OptimizationPlaybooks:
+    """P14: Optimization Playbook generation."""
+
+    def test_playbook_no_insights_returns_zero(self, db, workspace, billing):
+        count = generate_optimization_playbooks(db, str(workspace.id))
+        assert count == 0
+
+    def test_playbook_from_high_priority_insight(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+
+        comp = Competitor(workspace_id=workspace.id, name="Playbook Co", domain="playbookco.com", is_active=True)
+        db.add(comp)
+        db.flush()
+
+        # Create a P0 insight (trigger for playbook)
+        db.add(AIImpactInsight(
+            workspace_id=workspace.id,
+            competitor_id=comp.id,
+            insight_type=InsightType.AI_IMPACT.value,
+            signal_type="pricing_change",
+            signal_title="Playbook Co launched new pricing",
+            prompt_text="best ai tools",
+            visibility_before=2,
+            visibility_after=5,
+            visibility_delta=3,
+            engines_affected=["chatgpt", "claude"],
+            impact_score=75.0,
+            priority_level="P0",
+            correlation_confidence=80.0,
+            short_title="Playbook Co gained visibility",
+        ))
+        db.flush()
+
+        count = generate_optimization_playbooks(db, ws_id)
+        db.flush()
+        assert count >= 1
+
+        playbooks = db.query(AIImpactInsight).filter(
+            AIImpactInsight.workspace_id == workspace.id,
+            AIImpactInsight.insight_type == InsightType.AI_OPTIMIZATION_PLAYBOOK.value,
+        ).all()
+        assert len(playbooks) >= 1
+        pb = playbooks[0]
+        assert pb.strategy_actions is not None
+        assert len(pb.strategy_actions) > 0
+        assert "Playbook Co" in pb.signal_title
+
+    def test_playbook_skips_low_priority(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+
+        comp = Competitor(workspace_id=workspace.id, name="Low Prio Co", domain="lowprio.com", is_active=True)
+        db.add(comp)
+        db.flush()
+
+        # Only P3 insight — should NOT trigger playbook
+        db.add(AIImpactInsight(
+            workspace_id=workspace.id,
+            competitor_id=comp.id,
+            insight_type=InsightType.AI_IMPACT.value,
+            signal_type="blog_post",
+            signal_title="Low Prio Co blog",
+            visibility_before=1,
+            visibility_after=2,
+            visibility_delta=1,
+            engines_affected=["chatgpt"],
+            impact_score=10.0,
+            priority_level="P3",
+            correlation_confidence=30.0,
+        ))
+        db.flush()
+
+        count = generate_optimization_playbooks(db, ws_id)
+        assert count == 0
+
+    def test_playbook_priority_threshold(self):
+        assert "P0" in PLAYBOOK_PRIORITY_THRESHOLD
+        assert "P1" in PLAYBOOK_PRIORITY_THRESHOLD
+
+
+class TestP14DominanceWording:
+    """P14 PART 8: Verify AI dominance wording fix."""
+
+    def test_dominance_signal_title_wording(self, db, workspace, billing):
+        """The correlation engine should use 'appears across' not 'dominates'."""
+        from app.services.ai_visibility.correlation_engine import correlate_signals_with_visibility
+        # We won't run full correlation, just verify the code path
+        # by checking the imported module source doesn't contain old wording
+        import inspect
+        source = inspect.getsource(correlate_signals_with_visibility)
+        assert "appears across all AI engines" in source
+        assert "dominates all AI engines" not in source
+
+
+class TestP14OwnershipWording:
+    """P14 PART 7: Verify category ownership insight wording fix."""
+
+    def test_ownership_short_title_prefix(self, db, workspace, billing):
+        """Category ownership insights should use 'Ownership:' prefix."""
+        from app.services.ai_visibility.category_ownership import generate_category_ownership_insights
+        import inspect
+        source = inspect.getsource(generate_category_ownership_insights)
+        assert 'short_title=f"Ownership:' in source
+
+
+class TestP14CategoryMembershipAPI:
+    """P14 PARTS 1-4: Category membership management via existing API."""
+
+    def _create_prompt(self, ws_id, prompt_text):
+        """Helper: create suggestion → approve → return tracked prompt id."""
+        src = client.post(f"/api/workspaces/{ws_id}/ai-visibility/suggestions",
+                          json={"prompt_text": prompt_text, "source_type": "manual"})
+        assert src.status_code == 201
+        src_id = src.json()["id"]
+        approved = client.post(f"/api/workspaces/{ws_id}/ai-visibility/suggestions/approve",
+                               json={"prompt_source_ids": [src_id]})
+        assert approved.status_code == 200
+        return approved.json()[0]["id"]
+
+    def test_remove_prompt_from_category(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+
+        # Create category
+        r = client.post(f"/api/workspaces/{ws_id}/ai-visibility/categories",
+                        json={"category_name": "Membership Test Cat"})
+        assert r.status_code == 201
+        cat_id = r.json()["id"]
+
+        # Create prompt and assign to category
+        prompt_id = self._create_prompt(ws_id, "membership test prompt")
+        client.put(f"/api/workspaces/{ws_id}/ai-visibility/prompts/{prompt_id}/category?category_id={cat_id}")
+
+        # Remove from category (set to null)
+        r3 = client.put(f"/api/workspaces/{ws_id}/ai-visibility/prompts/{prompt_id}/category")
+        assert r3.status_code == 200
+        assert r3.json()["category_id"] is None
+
+        # Prompt still exists
+        r4 = client.get(f"/api/workspaces/{ws_id}/ai-visibility/prompts")
+        assert r4.status_code == 200
+        prompt = next(p for p in r4.json() if p["id"] == prompt_id)
+        assert prompt["category_id"] is None
+
+    def test_move_prompt_between_categories(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+
+        # Create two categories
+        r1 = client.post(f"/api/workspaces/{ws_id}/ai-visibility/categories",
+                         json={"category_name": "Source Cat"})
+        assert r1.status_code == 201
+        src_id = r1.json()["id"]
+
+        r2 = client.post(f"/api/workspaces/{ws_id}/ai-visibility/categories",
+                         json={"category_name": "Target Cat"})
+        assert r2.status_code == 201
+        tgt_id = r2.json()["id"]
+
+        # Create prompt and assign to source
+        prompt_id = self._create_prompt(ws_id, "movable prompt p14")
+        client.put(f"/api/workspaces/{ws_id}/ai-visibility/prompts/{prompt_id}/category?category_id={src_id}")
+
+        # Move to target
+        r4 = client.put(f"/api/workspaces/{ws_id}/ai-visibility/prompts/{prompt_id}/category?category_id={tgt_id}")
+        assert r4.status_code == 200
+        assert r4.json()["category_id"] == tgt_id
+
+    def test_add_uncategorized_prompt_to_category(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+
+        # Create prompt (uncategorized by default)
+        prompt_id = self._create_prompt(ws_id, "uncategorized prompt p14")
+
+        # Create category
+        r2 = client.post(f"/api/workspaces/{ws_id}/ai-visibility/categories",
+                         json={"category_name": "Add To Cat"})
+        assert r2.status_code == 201
+        cat_id = r2.json()["id"]
+
+        # Assign to category
+        r3 = client.put(f"/api/workspaces/{ws_id}/ai-visibility/prompts/{prompt_id}/category?category_id={cat_id}")
+        assert r3.status_code == 200
+        assert r3.json()["category_id"] == cat_id
+
+
+class TestP14InsightCompactFilterNewTypes:
+    """P14: Verify compact insight endpoint accepts new insight types in filter."""
+
+    def test_filter_by_share_of_voice(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/insights/compact?insight_type=ai_share_of_voice")
+        assert r.status_code == 200
+        assert isinstance(r.json(), list)
+
+    def test_filter_by_narrative(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/insights/compact?insight_type=ai_narrative")
+        assert r.status_code == 200
+
+    def test_filter_by_playbook(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/insights/compact?insight_type=ai_optimization_playbook")
+        assert r.status_code == 200
+
+
+class TestP14CorrelationPipelineIntegration:
+    """P14: Verify correlation pipeline runs without errors including new generators."""
+
+    def test_full_pipeline_runs_cleanly(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.post(f"/api/workspaces/{ws_id}/ai-visibility/insights/correlate?days=7")
+        assert r.status_code == 200
+        data = r.json()
+        assert "insights_created" in data
+        assert "competitors_analyzed" in data
+
+    def test_pipeline_backward_compat_no_categories(self, db, workspace, billing):
+        """Prompts without categories should still generate base insights without errors."""
+        ws_id = str(workspace.id)
+        # Create prompt without category
+        client.post(f"/api/workspaces/{ws_id}/ai-visibility/prompts",
+                    json={"prompt_text": "no category prompt p14"})
+        r = client.post(f"/api/workspaces/{ws_id}/ai-visibility/insights/correlate?days=7")
+        assert r.status_code == 200
+
+
+class TestP14BackwardCompatRegression:
+    """P14: Ensure all existing functionality still works after P14 changes."""
+
+    def test_insight_types_list_endpoint(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/insights/compact")
+        assert r.status_code == 200
+
+    def test_enriched_visibility_endpoint(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/category-visibility/enriched")
+        assert r.status_code == 200
+
+    def test_category_crud_still_works(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.post(f"/api/workspaces/{ws_id}/ai-visibility/categories",
+                        json={"category_name": "P14 Reg Cat"})
+        assert r.status_code == 201
+        cat_id = r.json()["id"]
+
+        r2 = client.patch(f"/api/workspaces/{ws_id}/ai-visibility/categories/{cat_id}",
+                          json={"category_name": "P14 Reg Cat Renamed"})
+        assert r2.status_code == 200
+
+        r3 = client.delete(f"/api/workspaces/{ws_id}/ai-visibility/categories/{cat_id}")
+        assert r3.status_code == 204
+
+    def test_prompts_still_work(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/prompts")
+        assert r.status_code == 200
+
+    def test_trends_still_work(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/trends?days=7")
+        assert r.status_code == 200
 

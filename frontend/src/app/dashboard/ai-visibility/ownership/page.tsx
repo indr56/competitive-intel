@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useActiveWorkspace, useFetch } from "@/lib/hooks";
 import { aiVisibility } from "@/lib/api";
-import type { CategoryVisibilityEnriched, PromptCategory } from "@/lib/types";
+import type { CategoryVisibilityEnriched, PromptCategory, AIInsightCompact } from "@/lib/types";
 
 export default function CategoryOwnershipPage() {
   const { active, loading: wsLoading } = useActiveWorkspace();
@@ -39,6 +39,24 @@ export default function CategoryOwnershipPage() {
         : Promise.resolve([]),
     [wsId]
   );
+
+  // Fetch category ownership insights for momentum indicators
+  const { data: ownershipInsights } = useFetch(
+    () =>
+      wsId
+        ? aiVisibility.listInsightsCompact(wsId, undefined, undefined, "ai_category_ownership")
+        : Promise.resolve([]),
+    [wsId]
+  );
+
+  // Build delta map: "competitor_name" → delta from insight
+  const deltaMap: Record<string, number> = {};
+  for (const ins of ownershipInsights ?? []) {
+    const key = ins.competitor_name;
+    if (key && ins.visibility_delta != null) {
+      deltaMap[key] = ins.visibility_delta;
+    }
+  }
 
   if (wsLoading || !active) {
     return <div className="p-8 text-gray-500">Loading workspace…</div>;
@@ -156,9 +174,19 @@ export default function CategoryOwnershipPage() {
                   {catData.competitors.map((comp, idx) => {
                     const barWidth = (comp.visibility_share / maxShare) * 100;
                     const colorClass = COLORS[idx % COLORS.length];
+                    const BG_COLORS = [
+                      "bg-indigo-600", "bg-violet-600", "bg-blue-600",
+                      "bg-emerald-600", "bg-amber-600", "bg-rose-600",
+                    ];
+                    const avatarColor = BG_COLORS[idx % BG_COLORS.length];
+                    const initial = comp.competitor_name.charAt(0).toUpperCase();
                     return (
-                      <div key={comp.competitor_id} className="flex items-center gap-4">
-                        <span className="text-sm font-medium text-gray-700 w-40 truncate">
+                      <div key={comp.competitor_id} className="flex items-center gap-3">
+                        {/* Logo placeholder */}
+                        <div className={`w-7 h-7 rounded-full ${avatarColor} flex items-center justify-center flex-shrink-0`}>
+                          <span className="text-[11px] font-bold text-white">{initial}</span>
+                        </div>
+                        <span className="text-sm font-medium text-gray-700 w-32 truncate">
                           {comp.competitor_name}
                         </span>
                         <div className="flex-1 h-7 bg-gray-100 rounded-full overflow-hidden relative">
@@ -170,6 +198,17 @@ export default function CategoryOwnershipPage() {
                         <span className="text-sm font-bold text-gray-800 w-14 text-right">
                           {comp.visibility_share.toFixed(1)}%
                         </span>
+                        {/* Momentum indicator */}
+                        {(() => {
+                          const delta = deltaMap[comp.competitor_name];
+                          if (delta == null || delta === 0) return <span className="w-16" />;
+                          return (
+                            <span className={`flex items-center gap-0.5 text-xs font-medium w-16 ${delta > 0 ? "text-green-600" : "text-red-600"}`}>
+                              {delta > 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                              {delta > 0 ? "+" : ""}{delta}%
+                            </span>
+                          );
+                        })()}
                       </div>
                     );
                   })}

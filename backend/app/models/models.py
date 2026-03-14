@@ -493,6 +493,10 @@ class InsightType(str, enum.Enum):
     AI_STRATEGY_ALERT = "ai_strategy_alert"
     AI_CITATION_INFLUENCE = "ai_citation_influence"
     AI_CATEGORY_OWNERSHIP = "ai_category_ownership"
+    # PROMPT-14 additions
+    AI_SHARE_OF_VOICE = "ai_share_of_voice"
+    AI_NARRATIVE = "ai_narrative"
+    AI_OPTIMIZATION_PLAYBOOK = "ai_optimization_playbook"
 
 
 class AIWorkspaceKeyword(Base):

@@ -23,6 +23,9 @@ import {
   Target,
   Link2,
   BarChart3,
+  Volume2,
+  MessageSquare,
+  BookOpen,
 } from "lucide-react";
 import { useActiveWorkspace, useFetch } from "@/lib/hooks";
 import { aiVisibility, competitors as competitorsApi } from "@/lib/api";
@@ -50,6 +53,9 @@ const INSIGHT_TYPE_META: Record<string, { icon: typeof Lightbulb; color: string;
   ai_strategy_alert: { icon: Target, color: "text-orange-600 bg-orange-50", label: "Strategy Alert" },
   ai_citation_influence: { icon: Link2, color: "text-cyan-600 bg-cyan-50", label: "Citation Influence" },
   ai_category_ownership: { icon: BarChart3, color: "text-indigo-600 bg-indigo-50", label: "Category Ownership" },
+  ai_share_of_voice: { icon: Volume2, color: "text-green-600 bg-green-50", label: "Share of Voice" },
+  ai_narrative: { icon: MessageSquare, color: "text-pink-600 bg-pink-50", label: "Narrative Analysis" },
+  ai_optimization_playbook: { icon: BookOpen, color: "text-red-600 bg-red-50", label: "Playbook" },
 };
 
 export default function AIImpactInsightsPage() {
@@ -203,6 +209,9 @@ export default function AIImpactInsightsPage() {
           <option value="ai_strategy_alert">Strategy Alert</option>
           <option value="ai_citation_influence">Citation Influence</option>
           <option value="ai_category_ownership">Category Ownership</option>
+          <option value="ai_share_of_voice">Share of Voice</option>
+          <option value="ai_narrative">Narrative Analysis</option>
+          <option value="ai_optimization_playbook">Playbook</option>
         </select>
       </div>
 
@@ -343,13 +352,37 @@ function CompactInsightCard({ card, onOpen }: { card: AIInsightCompact; onOpen: 
       {card.insight_type === "ai_category_ownership" && (
         <div className="flex items-center gap-2 mt-1 text-[11px] text-indigo-600">
           <BarChart3 className="h-3 w-3" />
-          <span>{card.visibility_before}% → {card.visibility_after}%</span>
+          <span>Ownership: {card.visibility_before}% → {card.visibility_after}%</span>
           {card.visibility_delta !== 0 && (
             <span className={card.visibility_delta > 0 ? "text-green-600 font-medium" : "text-red-600 font-medium"}>
               (Δ {card.visibility_delta > 0 ? "+" : ""}{card.visibility_delta}%)
             </span>
           )}
         </div>
+      )}
+
+      {/* Row 8: Share of Voice preview (P14) */}
+      {card.insight_type === "ai_share_of_voice" && card.short_title && (
+        <p className="text-[11px] text-green-600 mt-1 line-clamp-1">
+          <Volume2 className="inline h-3 w-3 mr-0.5 -mt-0.5" />
+          {card.short_title}
+        </p>
+      )}
+
+      {/* Row 9: Narrative Analysis preview (P14) */}
+      {card.insight_type === "ai_narrative" && card.short_title && (
+        <p className="text-[11px] text-pink-600 mt-1 line-clamp-1">
+          <MessageSquare className="inline h-3 w-3 mr-0.5 -mt-0.5" />
+          {card.short_title}
+        </p>
+      )}
+
+      {/* Row 10: Optimization Playbook preview (P14) */}
+      {card.insight_type === "ai_optimization_playbook" && card.strategy_actions && card.strategy_actions.length > 0 && (
+        <p className="text-[11px] text-red-600 mt-1 line-clamp-1">
+          <BookOpen className="inline h-3 w-3 mr-0.5 -mt-0.5" />
+          {card.strategy_actions.length} recommended actions
+        </p>
       )}
 
       {/* Timestamp */}
@@ -501,20 +534,20 @@ function DetailContent({ detail: d }: { detail: AIInsightDetail }) {
       )}
 
       {/* D. Visibility Change */}
-      <Section title="Visibility Change">
+      <Section title={["ai_category_ownership", "ai_share_of_voice"].includes(d.insight_type) ? "Ownership Change" : "Visibility Change"}>
         <div className="grid grid-cols-3 gap-3 text-center">
           <div className="rounded-lg bg-gray-50 p-3">
             <p className="text-[10px] text-gray-400 uppercase">Previous</p>
-            <p className="text-xl font-bold text-gray-800">{d.visibility_before}</p>
+            <p className="text-xl font-bold text-gray-800">{d.visibility_before}{["ai_category_ownership", "ai_share_of_voice"].includes(d.insight_type) ? "%" : ""}</p>
           </div>
           <div className="rounded-lg bg-gray-50 p-3">
             <p className="text-[10px] text-gray-400 uppercase">Current</p>
-            <p className="text-xl font-bold text-gray-800">{d.visibility_after}</p>
+            <p className="text-xl font-bold text-gray-800">{d.visibility_after}{["ai_category_ownership", "ai_share_of_voice"].includes(d.insight_type) ? "%" : ""}</p>
           </div>
           <div className={`rounded-lg p-3 ${delta > 0 ? "bg-green-50" : delta < 0 ? "bg-red-50" : "bg-gray-50"}`}>
             <p className="text-[10px] text-gray-400 uppercase">Delta</p>
             <p className={`text-xl font-bold ${deltaColor}`}>
-              {delta > 0 ? "+" : ""}{delta}
+              {delta > 0 ? "+" : ""}{delta}{["ai_category_ownership", "ai_share_of_voice"].includes(d.insight_type) ? "%" : ""}
             </p>
           </div>
         </div>

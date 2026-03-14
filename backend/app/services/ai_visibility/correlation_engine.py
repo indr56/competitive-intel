@@ -52,6 +52,9 @@ from app.services.ai_visibility.citation_extraction import extract_and_store_cit
 from app.services.ai_visibility.strategy_alerts import generate_strategy_alerts
 from app.services.ai_visibility.citation_influence import generate_citation_influence_insights
 from app.services.ai_visibility.category_ownership import generate_category_ownership_insights
+from app.services.ai_visibility.share_of_voice import generate_share_of_voice_insights
+from app.services.ai_visibility.narrative_analysis import generate_narrative_insights
+from app.services.ai_visibility.optimization_playbooks import generate_optimization_playbooks
 
 logger = logging.getLogger(__name__)
 
@@ -914,7 +917,7 @@ def correlate_signals_with_visibility(
                     competitor_id=comp.id,
                     insight_type=InsightType.AI_DOMINANCE.value,
                     signal_type="ai_dominance",
-                    signal_title=f"{comp.name} dominates all AI engines",
+                    signal_title=f"{comp.name} appears across all AI engines",
                     prompt_text=tp.prompt_text,
                     tracked_prompt_id=tp.id,
                     visibility_before=0,
@@ -965,6 +968,28 @@ def correlate_signals_with_visibility(
         logger.info("P11 category ownership insights: %d", cat_own_count)
     except Exception as e:
         logger.warning("Category ownership generation failed (non-fatal): %s", e)
+
+    # ── PROMPT-14: Advanced intelligence layers ──
+    try:
+        sov_count = generate_share_of_voice_insights(db, workspace_id, days)
+        insights_created += sov_count
+        logger.info("P14 share of voice insights: %d", sov_count)
+    except Exception as e:
+        logger.warning("Share of voice generation failed (non-fatal): %s", e)
+
+    try:
+        narrative_count = generate_narrative_insights(db, workspace_id, days)
+        insights_created += narrative_count
+        logger.info("P14 narrative insights: %d", narrative_count)
+    except Exception as e:
+        logger.warning("Narrative analysis failed (non-fatal): %s", e)
+
+    try:
+        playbook_count = generate_optimization_playbooks(db, workspace_id)
+        insights_created += playbook_count
+        logger.info("P14 optimization playbooks: %d", playbook_count)
+    except Exception as e:
+        logger.warning("Optimization playbook generation failed (non-fatal): %s", e)
 
     db.commit()
 
