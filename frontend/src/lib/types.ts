@@ -612,6 +612,21 @@ export interface CategoryVisibility {
   computed_at: string;
 }
 
+export interface CategoryVisibilityEnriched {
+  id: string;
+  workspace_id: string;
+  category_id: string;
+  category_name: string;
+  competitor_id: string;
+  competitor_name: string;
+  visibility_share: number;
+  engine_count: number;
+  prompt_count: number;
+  total_mentions: number;
+  time_window: string | null;
+  computed_at: string;
+}
+
 export interface VisibilityTrendPoint {
   date: string;
   engine: string;

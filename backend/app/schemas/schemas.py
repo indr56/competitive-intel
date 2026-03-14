@@ -744,6 +744,22 @@ class CategoryVisibilityRead(ORMBase):
     computed_at: datetime
 
 
+class CategoryVisibilityEnriched(BaseModel):
+    """P13: Category visibility with denormalized names for dashboard."""
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    category_id: uuid.UUID
+    category_name: str
+    competitor_id: uuid.UUID
+    competitor_name: str
+    visibility_share: float
+    engine_count: int
+    prompt_count: int
+    total_mentions: int
+    time_window: str | None
+    computed_at: datetime
+
+
 class VisibilityTrendPoint(BaseModel):
     date: str
     engine: str

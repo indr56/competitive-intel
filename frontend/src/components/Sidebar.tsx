@@ -17,6 +17,8 @@ import {
   ListChecks,
   TrendingUp,
   Lightbulb,
+  FolderOpen,
+  PieChart,
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -33,6 +35,8 @@ const NAV_ITEMS = [
 const AI_VIS_ITEMS = [
   { href: "/dashboard/ai-visibility/setup", label: "Prompt Setup", icon: Search },
   { href: "/dashboard/ai-visibility/prompts", label: "Tracked Prompts", icon: ListChecks },
+  { href: "/dashboard/ai-visibility/categories", label: "Prompt Categories", icon: FolderOpen },
+  { href: "/dashboard/ai-visibility/ownership", label: "Category Ownership", icon: PieChart },
   { href: "/dashboard/ai-visibility/trends", label: "Visibility Trends", icon: TrendingUp },
   { href: "/dashboard/ai-visibility/insights", label: "AI Impact Insights", icon: Lightbulb },
 ];

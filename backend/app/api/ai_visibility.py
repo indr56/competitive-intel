@@ -54,6 +54,7 @@ from app.schemas.schemas import (
     AIPromptSourceRead,
     AITrackedPromptRead,
     AIVisibilityEventRead,
+    CategoryVisibilityEnriched,
     CategoryVisibilityRead,
     GenerateSuggestionsRequest,
     GenerateSuggestionsResponse,
@@ -1070,3 +1071,46 @@ def list_category_visibility(
     if category_id:
         q = q.filter(CategoryVisibility.category_id == category_id)
     return q.order_by(CategoryVisibility.visibility_share.desc()).all()
+
+
+@router.get(
+    "/api/workspaces/{workspace_id}/ai-visibility/category-visibility/enriched",
+    response_model=list[CategoryVisibilityEnriched],
+)
+def list_category_visibility_enriched(
+    workspace_id: uuid.UUID,
+    category_id: uuid.UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """P13: Category visibility with competitor and category names for dashboard."""
+    _check_ws(db, workspace_id)
+    q = (
+        db.query(
+            CategoryVisibility,
+            Competitor.name.label("competitor_name"),
+            PromptCategory.category_name.label("category_name"),
+        )
+        .join(Competitor, Competitor.id == CategoryVisibility.competitor_id)
+        .join(PromptCategory, PromptCategory.id == CategoryVisibility.category_id)
+        .filter(CategoryVisibility.workspace_id == workspace_id)
+    )
+    if category_id:
+        q = q.filter(CategoryVisibility.category_id == category_id)
+    rows = q.order_by(CategoryVisibility.visibility_share.desc()).all()
+    result = []
+    for cv, comp_name, cat_name in rows:
+        result.append(CategoryVisibilityEnriched(
+            id=cv.id,
+            workspace_id=cv.workspace_id,
+            category_id=cv.category_id,
+            category_name=cat_name,
+            competitor_id=cv.competitor_id,
+            competitor_name=comp_name,
+            visibility_share=cv.visibility_share,
+            engine_count=cv.engine_count,
+            prompt_count=cv.prompt_count,
+            total_mentions=cv.total_mentions,
+            time_window=cv.time_window,
+            computed_at=cv.computed_at,
+        ))
+    return result

@@ -42,6 +42,7 @@ import type {
   PromptLimits,
   RunPromptsResponse,
   PromptCategory,
+  CategoryVisibilityEnriched,
 } from "./types";
 
 export const API_URL =
@@ -529,6 +530,13 @@ export const aiVisibility = {
       `/api/workspaces/${wsId}/ai-visibility/prompts/${promptId}/category${categoryId ? `?category_id=${categoryId}` : ""}`,
       { method: "PUT" },
     ),
+  // Category Visibility (P13)
+  listCategoryVisibilityEnriched: (wsId: string, categoryId?: string) => {
+    const qs = categoryId ? `?category_id=${categoryId}` : "";
+    return request<CategoryVisibilityEnriched[]>(
+      `/api/workspaces/${wsId}/ai-visibility/category-visibility/enriched${qs}`,
+    );
+  },
 };
 
 // ── Health ──

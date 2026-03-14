@@ -11,6 +11,8 @@ import {
   CheckCircle2,
   XCircle,
   Tag,
+  Plus,
+  X,
 } from "lucide-react";
 import { useActiveWorkspace, useFetch } from "@/lib/hooks";
 import { aiVisibility } from "@/lib/api";
@@ -30,6 +32,9 @@ export default function TrackedPromptsPage() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [showCreateCat, setShowCreateCat] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
+  const [newCatDesc, setNewCatDesc] = useState("");
 
   const {
     data: prompts,
@@ -45,7 +50,7 @@ export default function TrackedPromptsPage() {
     [wsId]
   );
 
-  const { data: categories } = useFetch(
+  const { data: categories, refetch: refetchCats } = useFetch(
     () => (wsId ? aiVisibility.listCategories(wsId) : Promise.resolve([])),
     [wsId]
   );
@@ -107,6 +112,26 @@ export default function TrackedPromptsPage() {
     } catch (e: any) {
       flash(e.message);
     }
+  };
+
+  const handleCreateCategory = async () => {
+    if (!newCatName.trim()) return;
+    setBusy(true);
+    try {
+      await aiVisibility.createCategory(wsId, newCatName.trim(), newCatDesc.trim() || undefined);
+      setNewCatName(""); setNewCatDesc(""); setShowCreateCat(false);
+      flash("Category created");
+      refetchCats();
+    } catch (e: any) { flash(e.message); }
+    setBusy(false);
+  };
+
+  const handleCategoryDropdown = (promptId: string, value: string) => {
+    if (value === "__create__") {
+      setShowCreateCat(true);
+      return;
+    }
+    handleAssignCategory(promptId, value || null);
   };
 
   const items = prompts ?? [];
@@ -215,13 +240,14 @@ export default function TrackedPromptsPage() {
                 <Tag className="h-3.5 w-3.5 text-gray-400" />
                 <select
                   value={p.category_id || ""}
-                  onChange={(e) => handleAssignCategory(p.id, e.target.value || null)}
-                  className="text-xs border rounded px-2 py-1 text-gray-600 focus:ring-2 focus:ring-violet-500 focus:outline-none max-w-[140px]"
+                  onChange={(e) => handleCategoryDropdown(p.id, e.target.value)}
+                  className="text-xs border rounded px-2 py-1 text-gray-600 focus:ring-2 focus:ring-violet-500 focus:outline-none max-w-[160px]"
                 >
-                  <option value="">—</option>
+                  <option value="">Uncategorized</option>
                   {cats.map((c) => (
                     <option key={c.id} value={c.id}>{c.category_name}</option>
                   ))}
+                  <option value="__create__">+ Create Category</option>
                 </select>
               </div>
 
@@ -257,6 +283,51 @@ export default function TrackedPromptsPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Inline Create Category Modal */}
+      {showCreateCat && (
+        <>
+          <div className="fixed inset-0 bg-black/30 z-40" onClick={() => setShowCreateCat(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-base font-bold text-gray-900">Create Category</h3>
+                <button onClick={() => setShowCreateCat(false)} className="p-1 rounded-lg hover:bg-gray-100 transition">
+                  <X className="h-4 w-4 text-gray-500" />
+                </button>
+              </div>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Category Name *</label>
+                  <input
+                    value={newCatName} onChange={(e) => setNewCatName(e.target.value)}
+                    placeholder="e.g. AI Code Editors" autoFocus
+                    className="w-full rounded-lg border px-3 py-2 text-sm focus:ring-2 focus:ring-violet-500 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Description</label>
+                  <input
+                    value={newCatDesc} onChange={(e) => setNewCatDesc(e.target.value)}
+                    placeholder="e.g. Prompts related to coding assistant tools"
+                    className="w-full rounded-lg border px-3 py-2 text-sm focus:ring-2 focus:ring-violet-500 focus:outline-none"
+                  />
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <button onClick={() => setShowCreateCat(false)}
+                    className="rounded-lg border px-4 py-2 text-sm text-gray-500 hover:bg-gray-50 transition">
+                    Cancel
+                  </button>
+                  <button onClick={handleCreateCategory} disabled={busy || !newCatName.trim()}
+                    className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50 transition">
+                    Create
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );
