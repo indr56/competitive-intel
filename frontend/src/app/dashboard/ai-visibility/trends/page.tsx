@@ -72,10 +72,10 @@ export default function VisibilityTrendsPage() {
 
   // Find max mentions for bar scaling
   let maxMentions = 1;
-  for (const [, engines] of dateMap) {
+  Array.from(dateMap.values()).forEach((engines) => {
     const total = Object.values(engines).reduce((s, e) => s + e.mentions, 0);
     if (total > maxMentions) maxMentions = total;
-  }
+  });
 
   return (
     <div className="space-y-6">
