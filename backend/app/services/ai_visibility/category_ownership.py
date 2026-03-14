@@ -287,7 +287,7 @@ def generate_category_ownership_insights(
                     f"in '{cat_data['category_name']}'. {comp.name}: "
                     f"{previous_share}% → {current_share}% (Δ {delta}%)."
                 ),
-                short_title=f"Category: {comp.name} {previous_share}% → {current_share}% in {cat_data['category_name']}",
+                short_title=f"Ownership: {comp.name} {previous_share}% → {current_share}% in {cat_data['category_name']}",
                 category_data=enriched_cat_data,
             ))
             insights_created += 1
