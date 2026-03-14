@@ -157,16 +157,41 @@ def store_category_visibility(
     return stored
 
 
+OWNERSHIP_DELTA_THRESHOLD = 5.0  # Generate insight when ownership shifts by >= 5%
+
+
+def _get_previous_shares(
+    db: Session,
+    workspace_id: str,
+) -> dict[str, dict[str, float]]:
+    """
+    Get previous category visibility shares from stored data.
+    Returns {category_id: {competitor_id: share}}
+    """
+    rows = (
+        db.query(CategoryVisibility)
+        .filter(CategoryVisibility.workspace_id == workspace_id)
+        .all()
+    )
+    result: dict[str, dict[str, float]] = {}
+    for r in rows:
+        result.setdefault(str(r.category_id), {})[str(r.competitor_id)] = float(r.visibility_share)
+    return result
+
+
 def generate_category_ownership_insights(
     db: Session,
     workspace_id: str,
     days: int = 7,
 ) -> int:
     """
-    Generate category ownership insights for categories where a single
-    competitor has a dominant share (>= 30%).
+    Generate category ownership insights with ownership change detection.
+    P12: Compares current vs previous window, generates insights when delta >= threshold.
     Returns count of insights created.
     """
+    # Get previous shares BEFORE we overwrite them
+    prev_shares = _get_previous_shares(db, workspace_id)
+
     ownership_data = compute_category_ownership(db, workspace_id, days)
 
     if not ownership_data:
@@ -186,51 +211,85 @@ def generate_category_ownership_insights(
         if not cat_data["competitors"]:
             continue
 
-        # Generate insight for top competitor in each category
-        top = cat_data["competitors"][0]
-        if top["visibility_share"] < 20.0:
-            continue  # Not dominant enough
+        cat_id = cat_data["category_id"]
+        prev_cat = prev_shares.get(cat_id, {})
 
-        comp = comp_map.get(top["competitor_id"])
-        if not comp:
-            continue
+        for comp_entry in cat_data["competitors"]:
+            comp = comp_map.get(comp_entry["competitor_id"])
+            if not comp:
+                continue
 
-        explanation = (
-            f"{comp.name} leads the '{cat_data['category_name']}' category "
-            f"with {top['visibility_share']}% of AI mentions "
-            f"across {cat_data['prompt_count']} prompts."
-        )
+            current_share = comp_entry["visibility_share"]
+            previous_share = prev_cat.get(comp_entry["competitor_id"], 0.0)
+            delta = round(current_share - previous_share, 1)
 
-        # Determine priority based on share
-        if top["visibility_share"] >= 50:
-            priority = PriorityLevel.P1.value
-        elif top["visibility_share"] >= 35:
-            priority = PriorityLevel.P2.value
-        else:
-            priority = PriorityLevel.P3.value
+            # P12: Generate insight if dominant (>= 20%) OR if ownership shifted significantly
+            generate = False
+            if abs(delta) >= OWNERSHIP_DELTA_THRESHOLD:
+                generate = True
+            elif current_share >= 20.0 and not prev_cat:
+                # First time computation — generate for dominant competitors
+                generate = True
 
-        db.add(AIImpactInsight(
-            workspace_id=workspace_id,
-            competitor_id=comp.id,
-            insight_type=InsightType.AI_CATEGORY_OWNERSHIP.value,
-            signal_type="ai_category_ownership",
-            signal_title=f"{comp.name} leads '{cat_data['category_name']}' category",
-            visibility_before=0,
-            visibility_after=top["mentions"],
-            visibility_delta=top["mentions"],
-            engines_affected=[],
-            impact_score=round(top["visibility_share"], 1),
-            priority_level=priority,
-            correlation_confidence=min(top["visibility_share"] + 20, 95.0),
-            explanation=explanation,
-            reasoning=(
-                f"Category ownership computed across {cat_data['prompt_count']} prompts "
-                f"in '{cat_data['category_name']}'. {comp.name} has {top['mentions']} mentions "
-                f"out of {cat_data['total_mentions']} total ({top['visibility_share']}%)."
-            ),
-            short_title=f"Category Leader: {comp.name} in {cat_data['category_name']}",
-            category_data=cat_data,
-        ))
-        insights_created += 1
+            if not generate:
+                continue
+
+            # Determine direction
+            if delta > 0:
+                direction = "gained"
+                signal_title = f"{comp.name} gained share in '{cat_data['category_name']}'"
+            elif delta < 0:
+                direction = "lost"
+                signal_title = f"{comp.name} lost share in '{cat_data['category_name']}'"
+            else:
+                direction = "leads"
+                signal_title = f"{comp.name} leads '{cat_data['category_name']}' category"
+
+            explanation = (
+                f"{comp.name} {direction} the '{cat_data['category_name']}' category. "
+                f"Ownership: {previous_share}% → {current_share}% "
+                f"(Δ {'+' if delta >= 0 else ''}{delta}%) "
+                f"across {cat_data['prompt_count']} prompts."
+            )
+
+            # Determine priority based on share and delta
+            if current_share >= 50 or abs(delta) >= 10:
+                priority = PriorityLevel.P1.value
+            elif current_share >= 35 or abs(delta) >= 7:
+                priority = PriorityLevel.P2.value
+            else:
+                priority = PriorityLevel.P3.value
+
+            # Enrich category_data with ownership change info
+            enriched_cat_data = {
+                **cat_data,
+                "previous_share": previous_share,
+                "current_share": current_share,
+                "ownership_delta": delta,
+            }
+
+            db.add(AIImpactInsight(
+                workspace_id=workspace_id,
+                competitor_id=comp.id,
+                insight_type=InsightType.AI_CATEGORY_OWNERSHIP.value,
+                signal_type="ai_category_ownership",
+                signal_title=signal_title,
+                visibility_before=round(previous_share),
+                visibility_after=round(current_share),
+                visibility_delta=round(delta),
+                engines_affected=[],
+                impact_score=round(current_share, 1),
+                priority_level=priority,
+                correlation_confidence=min(current_share + 20, 95.0),
+                explanation=explanation,
+                reasoning=(
+                    f"Category ownership computed across {cat_data['prompt_count']} prompts "
+                    f"in '{cat_data['category_name']}'. {comp.name}: "
+                    f"{previous_share}% → {current_share}% (Δ {delta}%)."
+                ),
+                short_title=f"Category: {comp.name} {previous_share}% → {current_share}% in {cat_data['category_name']}",
+                category_data=enriched_cat_data,
+            ))
+            insights_created += 1
 
     return insights_created

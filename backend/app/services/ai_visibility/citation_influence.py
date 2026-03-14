@@ -125,10 +125,17 @@ def generate_citation_influence_insights(
         top_domains = [s["domain"] for s in sources[:5]]
         total_score = sum(s["score"] for s in sources)
 
+        all_engines = sorted({e for s in sources for e in s["engines"]})
+        top3 = ", ".join(top_domains[:3])
+
         explanation = (
-            f"{comp.name} is cited through {len(sources)} source(s) across AI engines. "
-            f"Top sources: {', '.join(top_domains[:3])}."
+            f"{comp.name} is cited through {len(sources)} source(s) across "
+            f"{len(all_engines)} AI engine(s). "
+            f"Top sources: {top3}."
         )
+
+        # P12: Build a more descriptive short_title with top domains
+        short_title = f"Citation Influence: {comp.name} — {top3}"
 
         db.add(AIImpactInsight(
             workspace_id=workspace_id,
@@ -139,13 +146,17 @@ def generate_citation_influence_insights(
             visibility_before=0,
             visibility_after=len(sources),
             visibility_delta=len(sources),
-            engines_affected=sorted({e for s in sources for e in s["engines"]}),
+            engines_affected=all_engines,
             impact_score=min(total_score * 2, 80.0),
             priority_level=PriorityLevel.P2.value,
             correlation_confidence=min(total_score * 3, 90.0),
             explanation=explanation,
-            reasoning=f"Citation influence analysis found {len(sources)} unique source(s) influencing AI recommendations about {comp.name}.",
-            short_title=f"Citation Influence: {comp.name}",
+            reasoning=(
+                f"Citation influence analysis found {len(sources)} unique source(s) "
+                f"influencing AI recommendations about {comp.name}. "
+                f"Top domains: {top3}."
+            ),
+            short_title=short_title,
             influential_sources=sources,
         ))
         insights_created += 1

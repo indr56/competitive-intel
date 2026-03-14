@@ -535,6 +535,8 @@ class AITrackedPromptRead(ORMBase):
     normalized_text: str
     source_type: str
     cluster_id: uuid.UUID | None
+    category_id: uuid.UUID | None = None  # PROMPT-12
+    category_name: str | None = None      # PROMPT-12: denormalized for UI
     is_active: bool
     last_run_at: datetime | None
     created_at: datetime
@@ -703,6 +705,11 @@ class PromptCategoryCreate(BaseModel):
     description: str | None = None
 
 
+class PromptCategoryUpdate(BaseModel):
+    category_name: str | None = None
+    description: str | None = None
+
+
 class PromptCategoryRead(ORMBase):
     id: uuid.UUID
     workspace_id: uuid.UUID
@@ -729,6 +736,22 @@ class CategoryVisibilityRead(ORMBase):
     workspace_id: uuid.UUID
     category_id: uuid.UUID
     competitor_id: uuid.UUID
+    visibility_share: float
+    engine_count: int
+    prompt_count: int
+    total_mentions: int
+    time_window: str | None
+    computed_at: datetime
+
+
+class CategoryVisibilityEnriched(BaseModel):
+    """P13: Category visibility with denormalized names for dashboard."""
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    category_id: uuid.UUID
+    category_name: str
+    competitor_id: uuid.UUID
+    competitor_name: str
     visibility_share: float
     engine_count: int
     prompt_count: int

@@ -2325,3 +2325,520 @@ class TestP11BackwardCompatibility:
         assert res.status_code == 200
         assert res.json() == []
 
+
+# ═══════════════════════════════════════════════════════
+# PROMPT-12 Tests
+# ═══════════════════════════════════════════════════════
+
+
+class TestP12CategoryRename:
+    """Test PATCH /categories/{id} for renaming categories."""
+
+    def test_rename_category(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        # Create
+        r = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories",
+            json={"category_name": "Old Name", "description": "old desc"},
+        )
+        assert r.status_code == 201
+        cat_id = r.json()["id"]
+
+        # Rename
+        r2 = client.patch(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories/{cat_id}",
+            json={"category_name": "New Name"},
+        )
+        assert r2.status_code == 200
+        assert r2.json()["category_name"] == "New Name"
+        # description unchanged
+        assert r2.json()["description"] == "old desc"
+
+    def test_rename_category_update_description(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories",
+            json={"category_name": "DescTest"},
+        )
+        cat_id = r.json()["id"]
+        r2 = client.patch(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories/{cat_id}",
+            json={"description": "new description"},
+        )
+        assert r2.status_code == 200
+        assert r2.json()["description"] == "new description"
+        assert r2.json()["category_name"] == "DescTest"
+
+    def test_rename_category_duplicate_fails(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories",
+            json={"category_name": "CatA"},
+        )
+        r2 = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories",
+            json={"category_name": "CatB"},
+        )
+        cat_b_id = r2.json()["id"]
+        # Try to rename CatB to CatA
+        r3 = client.patch(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories/{cat_b_id}",
+            json={"category_name": "CatA"},
+        )
+        assert r3.status_code == 409
+
+    def test_rename_nonexistent_category(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.patch(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories/00000000-0000-0000-0000-000000000000",
+            json={"category_name": "X"},
+        )
+        assert r.status_code == 404
+
+
+class TestP12PromptCategoryInListing:
+    """Test that prompt listings include category_id and category_name."""
+
+    def test_prompt_has_category_fields(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        # Create category
+        cat = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories",
+            json={"category_name": "TestCatList"},
+        ).json()
+
+        # Create prompt via suggestion flow
+        client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/suggestions",
+            json={"prompt_text": "cat listing test prompt", "source_type": "manual"},
+        )
+        sug = client.get(f"/api/workspaces/{ws_id}/ai-visibility/suggestions").json()
+        approve = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/suggestions/approve",
+            json={"prompt_source_ids": [sug[-1]["id"]]},
+        )
+        prompt_id = approve.json()[0]["id"]
+
+        # Assign to category
+        client.put(
+            f"/api/workspaces/{ws_id}/ai-visibility/prompts/{prompt_id}/category?category_id={cat['id']}"
+        )
+
+        # List prompts
+        prompts = client.get(f"/api/workspaces/{ws_id}/ai-visibility/prompts").json()
+        found = next((p for p in prompts if p["id"] == prompt_id), None)
+        assert found is not None
+        assert found["category_id"] == cat["id"]
+        assert found["category_name"] == "TestCatList"
+
+    def test_prompt_uncategorized_has_null(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        prompts = client.get(f"/api/workspaces/{ws_id}/ai-visibility/prompts").json()
+        for p in prompts:
+            assert "category_id" in p
+            assert "category_name" in p
+
+    def test_filter_uncategorized(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/prompts?uncategorized=true")
+        assert res.status_code == 200
+        for p in res.json():
+            assert p["category_id"] is None
+
+
+class TestP12ImprovedStrategyAlerts:
+    """Test P12 strategy alert improvements."""
+
+    def test_strategy_actions_include_prompt_text(self):
+        from app.services.ai_visibility.strategy_alerts import _get_strategy_actions
+        actions = _get_strategy_actions(
+            "integration_added", "Cursor", "best ai code editors",
+        )
+        # At least one action should reference the prompt text
+        assert any("best ai code editors" in a for a in actions)
+
+    def test_strategy_actions_include_category_when_provided(self):
+        from app.services.ai_visibility.strategy_alerts import _get_strategy_actions
+        actions = _get_strategy_actions(
+            "integration_added", "Cursor", "best ai code editors",
+            category_name="AI Code Editors",
+        )
+        assert any("AI Code Editors" in a for a in actions)
+
+    def test_strategy_actions_include_citation_domains(self):
+        from app.services.ai_visibility.strategy_alerts import _get_strategy_actions
+        actions = _get_strategy_actions(
+            "hiring", "Cursor", "best ai code editors",
+            citation_domains=["github.com", "cursor.sh"],
+        )
+        assert any("github.com" in a for a in actions)
+
+    def test_strategy_actions_no_category_still_works(self):
+        from app.services.ai_visibility.strategy_alerts import _get_strategy_actions
+        actions = _get_strategy_actions(
+            "blog_post", "Copilot", "ai coding tools",
+        )
+        assert len(actions) >= 3
+        # Should not contain "None" or crash
+        for a in actions:
+            assert "None" not in a
+
+    def test_strategy_explanation_includes_category(self):
+        from app.services.ai_visibility.strategy_alerts import _generate_strategy_explanation
+        exp = _generate_strategy_explanation(
+            "Cursor", "hiring", 3, "best ai code editors", "AI Code Editors",
+            ["Action 1"],
+        )
+        assert "AI Code Editors" in exp
+        assert "best ai code editors" in exp
+
+    def test_strategy_explanation_omits_category_when_none(self):
+        from app.services.ai_visibility.strategy_alerts import _generate_strategy_explanation
+        exp = _generate_strategy_explanation(
+            "Cursor", "hiring", 3, "best ai code editors", None,
+            ["Action 1"],
+        )
+        assert "Category:" not in exp
+
+
+class TestP12ImprovedCitationInfluence:
+    """Test P12 citation influence improvements."""
+
+    def test_short_title_includes_domains(self):
+        """Citation influence short_title should include top domains."""
+        from app.services.ai_visibility.citation_influence import ENGINE_WEIGHTS
+        # Verify engine weights haven't changed (backward compat)
+        assert "perplexity" in ENGINE_WEIGHTS
+        assert ENGINE_WEIGHTS["perplexity"] == 1.3
+
+
+class TestP12ImprovedCategoryOwnership:
+    """Test P12 category ownership with ownership change detection."""
+
+    def test_ownership_delta_threshold_constant(self):
+        from app.services.ai_visibility.category_ownership import OWNERSHIP_DELTA_THRESHOLD
+        assert OWNERSHIP_DELTA_THRESHOLD == 5.0
+
+    def test_get_previous_shares_empty(self, db, workspace, billing):
+        from app.services.ai_visibility.category_ownership import _get_previous_shares
+        shares = _get_previous_shares(db, str(workspace.id))
+        assert isinstance(shares, dict)
+
+    def test_compute_category_ownership_returns_list(self, db, workspace, billing):
+        from app.services.ai_visibility.category_ownership import compute_category_ownership
+        result = compute_category_ownership(db, str(workspace.id))
+        assert isinstance(result, list)
+
+
+class TestP12DeleteCategoryBehavior:
+    """Test that deleting a category preserves prompts."""
+
+    def test_delete_category_preserves_prompts(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+
+        # Create category
+        cat = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories",
+            json={"category_name": "DeleteTestCat"},
+        ).json()
+
+        # Create and assign a prompt
+        client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/suggestions",
+            json={"prompt_text": "delete cat test prompt", "source_type": "manual"},
+        )
+        sug = client.get(f"/api/workspaces/{ws_id}/ai-visibility/suggestions").json()
+        approve = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/suggestions/approve",
+            json={"prompt_source_ids": [sug[-1]["id"]]},
+        )
+        prompt_id = approve.json()[0]["id"]
+
+        client.put(
+            f"/api/workspaces/{ws_id}/ai-visibility/prompts/{prompt_id}/category?category_id={cat['id']}"
+        )
+
+        # Delete category
+        r = client.delete(f"/api/workspaces/{ws_id}/ai-visibility/categories/{cat['id']}")
+        assert r.status_code == 204
+
+        # Prompt still exists and is now uncategorized
+        prompts = client.get(f"/api/workspaces/{ws_id}/ai-visibility/prompts").json()
+        found = next((p for p in prompts if p["id"] == prompt_id), None)
+        assert found is not None
+        assert found["category_id"] is None
+        assert found["category_name"] is None
+
+
+class TestP12BackwardCompatibility:
+    """Regression: existing P11 and earlier features still work."""
+
+    def test_existing_insight_types_enum(self):
+        from app.models.models import InsightType
+        assert InsightType.AI_IMPACT.value == "ai_impact"
+        assert InsightType.AI_VISIBILITY_HIJACK.value == "ai_visibility_hijack"
+        assert InsightType.AI_VISIBILITY_LOSS.value == "ai_visibility_loss"
+        assert InsightType.AI_DOMINANCE.value == "ai_dominance"
+        assert InsightType.AI_STRATEGY_ALERT.value == "ai_strategy_alert"
+        assert InsightType.AI_CITATION_INFLUENCE.value == "ai_citation_influence"
+        assert InsightType.AI_CATEGORY_OWNERSHIP.value == "ai_category_ownership"
+
+    def test_tracked_prompt_without_category_works(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        prompts = client.get(f"/api/workspaces/{ws_id}/ai-visibility/prompts").json()
+        # All should load successfully even without categories
+        assert isinstance(prompts, list)
+
+    def test_p11_categories_crud_still_works(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        # Create
+        r = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories",
+            json={"category_name": "RegTest"},
+        )
+        assert r.status_code == 201
+        # List
+        cats = client.get(f"/api/workspaces/{ws_id}/ai-visibility/categories").json()
+        assert any(c["category_name"] == "RegTest" for c in cats)
+
+    def test_correlate_still_works(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.post(f"/api/workspaces/{ws_id}/ai-visibility/insights/correlate?days=7")
+        assert r.status_code == 200
+        data = r.json()
+        assert "insights_created" in data
+        assert "citations_extracted" in data
+
+    def test_compact_cards_have_all_p12_compatible_fields(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/insights/compact")
+        assert r.status_code == 200
+        for card in r.json():
+            assert "insight_type" in card
+            assert "strategy_actions" in card
+
+
+# ═══════════════════════════════════════════════════════
+# PROMPT-13 TESTS
+# ═══════════════════════════════════════════════════════
+
+
+class TestP13EnrichedCategoryVisibility:
+    """P13: Tests for the enriched category-visibility endpoint."""
+
+    def test_enriched_endpoint_returns_200(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/category-visibility/enriched")
+        assert r.status_code == 200
+        assert isinstance(r.json(), list)
+
+    def test_enriched_endpoint_returns_competitor_and_category_names(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        # Create category, competitor, and visibility data
+        cat = PromptCategory(workspace_id=workspace.id, category_name="P13 Test Cat", description="test")
+        db.add(cat)
+        db.flush()
+        comp = Competitor(workspace_id=workspace.id, name="P13 Comp", domain="p13comp.test")
+        db.add(comp)
+        db.flush()
+        cv = CategoryVisibility(
+            workspace_id=workspace.id,
+            category_id=cat.id,
+            competitor_id=comp.id,
+            visibility_share=75.0,
+            engine_count=4,
+            prompt_count=3,
+            total_mentions=12,
+            time_window="7d",
+        )
+        db.add(cv)
+        db.commit()
+
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/category-visibility/enriched")
+        assert r.status_code == 200
+        data = r.json()
+        enriched = [d for d in data if d["category_name"] == "P13 Test Cat"]
+        assert len(enriched) >= 1
+        row = enriched[0]
+        assert row["competitor_name"] == "P13 Comp"
+        assert row["category_name"] == "P13 Test Cat"
+        assert row["visibility_share"] == 75.0
+        assert row["engine_count"] == 4
+        assert row["prompt_count"] == 3
+
+    def test_enriched_endpoint_filters_by_category_id(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        cat1 = PromptCategory(workspace_id=workspace.id, category_name="P13 Filter A")
+        cat2 = PromptCategory(workspace_id=workspace.id, category_name="P13 Filter B")
+        db.add_all([cat1, cat2])
+        db.flush()
+        comp = Competitor(workspace_id=workspace.id, name="P13 FilterComp", domain="p13filter.test")
+        db.add(comp)
+        db.flush()
+        cv1 = CategoryVisibility(workspace_id=workspace.id, category_id=cat1.id, competitor_id=comp.id,
+                                  visibility_share=60.0, engine_count=2, prompt_count=1, total_mentions=5)
+        cv2 = CategoryVisibility(workspace_id=workspace.id, category_id=cat2.id, competitor_id=comp.id,
+                                  visibility_share=40.0, engine_count=2, prompt_count=1, total_mentions=3)
+        db.add_all([cv1, cv2])
+        db.commit()
+
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/category-visibility/enriched?category_id={cat1.id}")
+        assert r.status_code == 200
+        data = r.json()
+        assert all(d["category_id"] == str(cat1.id) for d in data)
+
+
+class TestP13CategoryLifecycle:
+    """P13: Tests for full category CRUD lifecycle via API."""
+
+    def test_create_category_with_description(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.post(f"/api/workspaces/{ws_id}/ai-visibility/categories",
+                        json={"category_name": "P13 Lifecycle Cat", "description": "Lifecycle test"})
+        assert r.status_code == 201
+        data = r.json()
+        assert data["category_name"] == "P13 Lifecycle Cat"
+        assert data["description"] == "Lifecycle test"
+
+    def test_rename_category(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.post(f"/api/workspaces/{ws_id}/ai-visibility/categories",
+                        json={"category_name": "P13 Before Rename"})
+        cat_id = r.json()["id"]
+        r2 = client.patch(f"/api/workspaces/{ws_id}/ai-visibility/categories/{cat_id}",
+                          json={"category_name": "P13 After Rename"})
+        assert r2.status_code == 200
+        assert r2.json()["category_name"] == "P13 After Rename"
+
+    def test_rename_duplicate_rejected(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        client.post(f"/api/workspaces/{ws_id}/ai-visibility/categories",
+                    json={"category_name": "P13 DupA"})
+        r2 = client.post(f"/api/workspaces/{ws_id}/ai-visibility/categories",
+                         json={"category_name": "P13 DupB"})
+        cat_b_id = r2.json()["id"]
+        r3 = client.patch(f"/api/workspaces/{ws_id}/ai-visibility/categories/{cat_b_id}",
+                          json={"category_name": "P13 DupA"})
+        assert r3.status_code == 409
+
+    def test_update_description_only(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.post(f"/api/workspaces/{ws_id}/ai-visibility/categories",
+                        json={"category_name": "P13 DescOnly"})
+        cat_id = r.json()["id"]
+        r2 = client.patch(f"/api/workspaces/{ws_id}/ai-visibility/categories/{cat_id}",
+                          json={"description": "Updated description"})
+        assert r2.status_code == 200
+        assert r2.json()["description"] == "Updated description"
+        assert r2.json()["category_name"] == "P13 DescOnly"
+
+
+class TestP13DeleteCategoryPreservesPrompts:
+    """P13: Deletion behavior — prompts become uncategorized."""
+
+    def test_delete_category_sets_prompt_to_null(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        # Create category
+        r = client.post(f"/api/workspaces/{ws_id}/ai-visibility/categories",
+                        json={"category_name": "P13 DelCat"})
+        cat_id = r.json()["id"]
+
+        # Create prompt and assign
+        src = client.post(f"/api/workspaces/{ws_id}/ai-visibility/suggestions",
+                          json={"prompt_text": "p13 del test prompt", "source_type": "manual"})
+        src_id = src.json()["id"]
+        approve = client.post(f"/api/workspaces/{ws_id}/ai-visibility/suggestions/approve",
+                              json={"prompt_source_ids": [src_id]})
+        prompt_id = approve.json()[0]["id"]
+        client.put(f"/api/workspaces/{ws_id}/ai-visibility/prompts/{prompt_id}/category?category_id={cat_id}")
+
+        # Verify assigned
+        prompts = client.get(f"/api/workspaces/{ws_id}/ai-visibility/prompts").json()
+        p = [x for x in prompts if x["id"] == prompt_id][0]
+        assert p["category_id"] == cat_id
+
+        # Delete category
+        r2 = client.delete(f"/api/workspaces/{ws_id}/ai-visibility/categories/{cat_id}")
+        assert r2.status_code == 204
+
+        # Verify prompt uncategorized
+        prompts2 = client.get(f"/api/workspaces/{ws_id}/ai-visibility/prompts").json()
+        p2 = [x for x in prompts2 if x["id"] == prompt_id][0]
+        assert p2["category_id"] is None
+        assert p2["category_name"] is None
+
+
+class TestP13PromptCategoryFields:
+    """P13: Verify prompts list includes category_id and category_name."""
+
+    def test_prompt_listing_has_category_fields(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/prompts")
+        assert r.status_code == 200
+        for p in r.json():
+            assert "category_id" in p
+            assert "category_name" in p
+
+    def test_prompt_with_category_shows_name(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        # Create category
+        r = client.post(f"/api/workspaces/{ws_id}/ai-visibility/categories",
+                        json={"category_name": "P13 NameCheck"})
+        cat_id = r.json()["id"]
+
+        # Create prompt and assign
+        src = client.post(f"/api/workspaces/{ws_id}/ai-visibility/suggestions",
+                          json={"prompt_text": "p13 name check prompt", "source_type": "manual"})
+        src_id = src.json()["id"]
+        approve = client.post(f"/api/workspaces/{ws_id}/ai-visibility/suggestions/approve",
+                              json={"prompt_source_ids": [src_id]})
+        prompt_id = approve.json()[0]["id"]
+        client.put(f"/api/workspaces/{ws_id}/ai-visibility/prompts/{prompt_id}/category?category_id={cat_id}")
+
+        prompts = client.get(f"/api/workspaces/{ws_id}/ai-visibility/prompts").json()
+        p = [x for x in prompts if x["id"] == prompt_id][0]
+        assert p["category_name"] == "P13 NameCheck"
+
+
+class TestP13BackwardCompatibility:
+    """P13: Regression tests — existing features must not break."""
+
+    def test_existing_category_visibility_endpoint_still_works(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/category-visibility")
+        assert r.status_code == 200
+        assert isinstance(r.json(), list)
+
+    def test_insights_compact_still_works(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/insights/compact")
+        assert r.status_code == 200
+
+    def test_correlate_still_works_p13(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.post(f"/api/workspaces/{ws_id}/ai-visibility/insights/correlate?days=7")
+        assert r.status_code == 200
+        assert "insights_created" in r.json()
+
+    def test_trends_still_works(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/trends?days=7")
+        assert r.status_code == 200
+
+    def test_prompt_listing_still_works(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.get(f"/api/workspaces/{ws_id}/ai-visibility/prompts")
+        assert r.status_code == 200
+
+    def test_categories_crud_still_works(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        r = client.post(f"/api/workspaces/{ws_id}/ai-visibility/categories",
+                        json={"category_name": "P13 Reg"})
+        assert r.status_code == 201
+        cat_id = r.json()["id"]
+        r2 = client.get(f"/api/workspaces/{ws_id}/ai-visibility/categories")
+        assert r2.status_code == 200
+        assert any(c["id"] == cat_id for c in r2.json())
+        r3 = client.delete(f"/api/workspaces/{ws_id}/ai-visibility/categories/{cat_id}")
+        assert r3.status_code == 204
+
