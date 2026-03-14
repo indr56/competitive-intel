@@ -535,6 +535,8 @@ class AITrackedPromptRead(ORMBase):
     normalized_text: str
     source_type: str
     cluster_id: uuid.UUID | None
+    category_id: uuid.UUID | None = None  # PROMPT-12
+    category_name: str | None = None      # PROMPT-12: denormalized for UI
     is_active: bool
     last_run_at: datetime | None
     created_at: datetime
@@ -700,6 +702,11 @@ class AIInsightDetailRead(BaseModel):
 
 class PromptCategoryCreate(BaseModel):
     category_name: str
+    description: str | None = None
+
+
+class PromptCategoryUpdate(BaseModel):
+    category_name: str | None = None
     description: str | None = None
 
 

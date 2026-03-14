@@ -41,6 +41,7 @@ import type {
   VisibilityTrendsData,
   PromptLimits,
   RunPromptsResponse,
+  PromptCategory,
 } from "./types";
 
 export const API_URL =
@@ -507,6 +508,27 @@ export const aiVisibility = {
     request<AIInsightDetail>(`/api/workspaces/${wsId}/ai-visibility/insights/${insightId}`),
   runCorrelation: (wsId: string, days = 7) =>
     request<{ insights_created: number }>(`/api/workspaces/${wsId}/ai-visibility/insights/correlate?days=${days}`, { method: "POST" }),
+
+  // Categories (PROMPT-12)
+  listCategories: (wsId: string) =>
+    request<PromptCategory[]>(`/api/workspaces/${wsId}/ai-visibility/categories`),
+  createCategory: (wsId: string, categoryName: string, description?: string) =>
+    request<PromptCategory>(`/api/workspaces/${wsId}/ai-visibility/categories`, {
+      method: "POST",
+      body: JSON.stringify({ category_name: categoryName, description: description || null }),
+    }),
+  updateCategory: (wsId: string, catId: string, data: { category_name?: string; description?: string }) =>
+    request<PromptCategory>(`/api/workspaces/${wsId}/ai-visibility/categories/${catId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteCategory: (wsId: string, catId: string) =>
+    request<void>(`/api/workspaces/${wsId}/ai-visibility/categories/${catId}`, { method: "DELETE" }),
+  assignPromptCategory: (wsId: string, promptId: string, categoryId: string | null) =>
+    request<{ prompt_id: string; category_id: string | null }>(
+      `/api/workspaces/${wsId}/ai-visibility/prompts/${promptId}/category${categoryId ? `?category_id=${categoryId}` : ""}`,
+      { method: "PUT" },
+    ),
 };
 
 // ── Health ──

@@ -200,6 +200,9 @@ export default function AIImpactInsightsPage() {
           <option value="ai_visibility_hijack">Visibility Hijack</option>
           <option value="ai_visibility_loss">Visibility Loss</option>
           <option value="ai_dominance">AI Dominance</option>
+          <option value="ai_strategy_alert">Strategy Alert</option>
+          <option value="ai_citation_influence">Citation Influence</option>
+          <option value="ai_category_ownership">Category Ownership</option>
         </select>
       </div>
 
@@ -326,6 +329,27 @@ function CompactInsightCard({ card, onOpen }: { card: AIInsightCompact; onOpen: 
           <Target className="inline h-3 w-3 mr-0.5 -mt-0.5" />
           {card.strategy_actions[0]}
         </p>
+      )}
+
+      {/* Row 6: Citation influence domains preview (P12) */}
+      {card.insight_type === "ai_citation_influence" && card.short_title && (
+        <p className="text-[11px] text-cyan-600 mt-1 line-clamp-1">
+          <Link2 className="inline h-3 w-3 mr-0.5 -mt-0.5" />
+          {card.short_title}
+        </p>
+      )}
+
+      {/* Row 7: Category ownership preview (P12) */}
+      {card.insight_type === "ai_category_ownership" && (
+        <div className="flex items-center gap-2 mt-1 text-[11px] text-indigo-600">
+          <BarChart3 className="h-3 w-3" />
+          <span>{card.visibility_before}% → {card.visibility_after}%</span>
+          {card.visibility_delta !== 0 && (
+            <span className={card.visibility_delta > 0 ? "text-green-600 font-medium" : "text-red-600 font-medium"}>
+              (Δ {card.visibility_delta > 0 ? "+" : ""}{card.visibility_delta}%)
+            </span>
+          )}
+        </div>
       )}
 
       {/* Timestamp */}
@@ -613,26 +637,44 @@ function DetailContent({ detail: d }: { detail: AIInsightDetail }) {
         </Section>
       )}
 
-      {/* J. Category Ownership (PROMPT-11) */}
-      {d.category_data && d.category_data.competitors && (
+      {/* J. Category Ownership (PROMPT-11 + P12 delta) */}
+      {d.category_data && d.category_data.category_name && (
         <Section title={`Category: ${d.category_data.category_name}`}>
           <p className="text-xs text-gray-400 mb-2">
-            {d.category_data.prompt_count} prompts · {d.category_data.total_mentions} total mentions
+            {d.category_data.prompt_count ? `${d.category_data.prompt_count} prompts` : ""}
+            {d.category_data.total_mentions ? ` · ${d.category_data.total_mentions} total mentions` : ""}
           </p>
-          <div className="space-y-1.5">
-            {d.category_data.competitors.slice(0, 5).map((comp: any, i: number) => (
-              <div key={i} className="flex items-center gap-2">
-                <span className="text-xs font-medium text-gray-700 w-24 truncate">{comp.competitor_name}</span>
-                <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
-                  <div
-                    className={`h-2 rounded-full ${i === 0 ? "bg-indigo-500" : "bg-gray-300"}`}
-                    style={{ width: `${comp.visibility_share}%` }}
-                  />
-                </div>
-                <span className="text-xs font-bold text-gray-600 w-12 text-right">{comp.visibility_share}%</span>
+          {/* P12: Ownership shift summary */}
+          {d.category_data.ownership_delta != null && (
+            <div className="rounded-lg bg-indigo-50 border border-indigo-200 px-3 py-2 mb-3 flex items-center gap-3">
+              <BarChart3 className="h-4 w-4 text-indigo-500" />
+              <div className="text-xs">
+                <span className="text-gray-500">Ownership: </span>
+                <span className="font-medium text-gray-700">{d.category_data.previous_share ?? 0}%</span>
+                <span className="text-gray-400"> → </span>
+                <span className="font-medium text-gray-700">{d.category_data.current_share ?? 0}%</span>
+                <span className={`font-bold ml-1 ${d.category_data.ownership_delta > 0 ? "text-green-600" : d.category_data.ownership_delta < 0 ? "text-red-600" : "text-gray-500"}`}>
+                  (Δ {d.category_data.ownership_delta > 0 ? "+" : ""}{d.category_data.ownership_delta}%)
+                </span>
               </div>
-            ))}
-          </div>
+            </div>
+          )}
+          {d.category_data.competitors && (
+            <div className="space-y-1.5">
+              {d.category_data.competitors.slice(0, 5).map((comp: any, i: number) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className="text-xs font-medium text-gray-700 w-24 truncate">{comp.competitor_name}</span>
+                  <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
+                    <div
+                      className={`h-2 rounded-full ${i === 0 ? "bg-indigo-500" : "bg-gray-300"}`}
+                      style={{ width: `${comp.visibility_share}%` }}
+                    />
+                  </div>
+                  <span className="text-xs font-bold text-gray-600 w-12 text-right">{comp.visibility_share}%</span>
+                </div>
+              ))}
+            </div>
+          )}
         </Section>
       )}
 

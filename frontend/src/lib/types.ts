@@ -451,6 +451,8 @@ export interface AITrackedPrompt {
   normalized_text: string;
   source_type: string;
   cluster_id: string | null;
+  category_id: string | null;
+  category_name: string | null;
   is_active: boolean;
   last_run_at: string | null;
   created_at: string;
@@ -574,7 +576,11 @@ export interface AIInsightDetail {
     category_name: string;
     prompt_count: number;
     total_mentions: number;
-    competitors: {
+    // P12: ownership change fields
+    previous_share?: number;
+    current_share?: number;
+    ownership_delta?: number;
+    competitors?: {
       competitor_id: string;
       competitor_name: string;
       visibility_share: number;

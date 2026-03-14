@@ -59,6 +59,7 @@ from app.schemas.schemas import (
     GenerateSuggestionsResponse,
     PromptCategoryCreate,
     PromptCategoryRead,
+    PromptCategoryUpdate,
     PromptEngineCitationRead,
     RunPromptsRequest,
     RunPromptsResponse,
@@ -395,13 +396,33 @@ def reject_prompts(
 def list_tracked_prompts(
     workspace_id: uuid.UUID,
     active_only: bool = False,
+    category_id: uuid.UUID | None = Query(default=None),
+    uncategorized: bool = Query(default=False),
     db: Session = Depends(get_db),
 ):
     _check_ws(db, workspace_id)
     q = db.query(AITrackedPrompt).filter(AITrackedPrompt.workspace_id == workspace_id)
     if active_only:
         q = q.filter(AITrackedPrompt.is_active == True)
-    return q.order_by(AITrackedPrompt.created_at.desc()).all()
+    if category_id:
+        q = q.filter(AITrackedPrompt.category_id == category_id)
+    if uncategorized:
+        q = q.filter(AITrackedPrompt.category_id == None)
+    rows = q.order_by(AITrackedPrompt.created_at.desc()).all()
+
+    # Denormalize category_name for UI
+    cat_ids = {r.category_id for r in rows if r.category_id}
+    cat_map: dict[str, str] = {}
+    if cat_ids:
+        cats = db.query(PromptCategory).filter(PromptCategory.id.in_(cat_ids)).all()
+        cat_map = {str(c.id): c.category_name for c in cats}
+
+    result = []
+    for r in rows:
+        d = AITrackedPromptRead.model_validate(r)
+        d.category_name = cat_map.get(str(r.category_id)) if r.category_id else None
+        result.append(d)
+    return result
 
 
 @router.post(
@@ -919,6 +940,52 @@ def delete_prompt_category(
         raise HTTPException(404, "Category not found")
     db.delete(cat)
     db.commit()
+
+
+@router.patch(
+    "/api/workspaces/{workspace_id}/ai-visibility/categories/{category_id}",
+    response_model=PromptCategoryRead,
+)
+def update_prompt_category(
+    workspace_id: uuid.UUID,
+    category_id: uuid.UUID,
+    body: PromptCategoryUpdate,
+    db: Session = Depends(get_db),
+):
+    """Rename or update description of a prompt category."""
+    _check_ws(db, workspace_id)
+    cat = (
+        db.query(PromptCategory)
+        .filter(
+            PromptCategory.id == category_id,
+            PromptCategory.workspace_id == workspace_id,
+        )
+        .first()
+    )
+    if not cat:
+        raise HTTPException(404, "Category not found")
+
+    if body.category_name is not None:
+        # Check uniqueness
+        dup = (
+            db.query(PromptCategory)
+            .filter(
+                PromptCategory.workspace_id == workspace_id,
+                PromptCategory.category_name == body.category_name,
+                PromptCategory.id != category_id,
+            )
+            .first()
+        )
+        if dup:
+            raise HTTPException(409, f"Category '{body.category_name}' already exists")
+        cat.category_name = body.category_name
+
+    if body.description is not None:
+        cat.description = body.description
+
+    db.commit()
+    db.refresh(cat)
+    return cat
 
 
 @router.put(

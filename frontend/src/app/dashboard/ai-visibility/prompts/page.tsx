@@ -10,10 +10,11 @@ import {
   Clock,
   CheckCircle2,
   XCircle,
+  Tag,
 } from "lucide-react";
 import { useActiveWorkspace, useFetch } from "@/lib/hooks";
 import { aiVisibility } from "@/lib/api";
-import type { AITrackedPrompt } from "@/lib/types";
+import type { AITrackedPrompt, PromptCategory } from "@/lib/types";
 
 const ENGINE_COLORS: Record<string, string> = {
   chatgpt: "bg-green-100 text-green-700",
@@ -43,6 +44,13 @@ export default function TrackedPromptsPage() {
     () => (wsId ? aiVisibility.getPromptLimits(wsId) : Promise.resolve(null)),
     [wsId]
   );
+
+  const { data: categories } = useFetch(
+    () => (wsId ? aiVisibility.listCategories(wsId) : Promise.resolve([])),
+    [wsId]
+  );
+
+  const cats = categories ?? [];
 
   if (wsLoading || !active) {
     return <div className="p-8 text-gray-500">Loading workspace…</div>;
@@ -90,6 +98,15 @@ export default function TrackedPromptsPage() {
       refetch();
       refetchLimits();
     } catch {}
+  };
+
+  const handleAssignCategory = async (promptId: string, categoryId: string | null) => {
+    try {
+      await aiVisibility.assignPromptCategory(wsId, promptId, categoryId);
+      refetch();
+    } catch (e: any) {
+      flash(e.message);
+    }
   };
 
   const items = prompts ?? [];
@@ -191,6 +208,21 @@ export default function TrackedPromptsPage() {
                     </span>
                   )}
                 </div>
+              </div>
+
+              {/* Category dropdown */}
+              <div className="flex items-center gap-1.5 flex-shrink-0">
+                <Tag className="h-3.5 w-3.5 text-gray-400" />
+                <select
+                  value={p.category_id || ""}
+                  onChange={(e) => handleAssignCategory(p.id, e.target.value || null)}
+                  className="text-xs border rounded px-2 py-1 text-gray-600 focus:ring-2 focus:ring-violet-500 focus:outline-none max-w-[140px]"
+                >
+                  <option value="">—</option>
+                  {cats.map((c) => (
+                    <option key={c.id} value={c.id}>{c.category_name}</option>
+                  ))}
+                </select>
               </div>
 
               {/* Actions */}
