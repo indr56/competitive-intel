@@ -48,6 +48,10 @@ from app.services.ai_visibility.prompt_signal_relevance import (
     compute_prompt_signal_relevance,
     PROMPT_SIGNAL_RELEVANCE_THRESHOLD,
 )
+from app.services.ai_visibility.citation_extraction import extract_and_store_citations
+from app.services.ai_visibility.strategy_alerts import generate_strategy_alerts
+from app.services.ai_visibility.citation_influence import generate_citation_influence_insights
+from app.services.ai_visibility.category_ownership import generate_category_ownership_insights
 
 logger = logging.getLogger(__name__)
 
@@ -932,7 +936,40 @@ def correlate_signals_with_visibility(
 
     db.commit()
 
+    # ── PROMPT-11: Extended intelligence pipeline ──
+    # Run after base insights are committed so generators can query them
+    try:
+        citations_stored = extract_and_store_citations(db, workspace_id, competitors, days)
+        logger.info("P11 citations extracted: %d", citations_stored)
+    except Exception as e:
+        logger.warning("Citation extraction failed (non-fatal): %s", e)
+        citations_stored = 0
+
+    try:
+        strategy_count = generate_strategy_alerts(db, workspace_id)
+        insights_created += strategy_count
+        logger.info("P11 strategy alerts created: %d", strategy_count)
+    except Exception as e:
+        logger.warning("Strategy alert generation failed (non-fatal): %s", e)
+
+    try:
+        citation_inf_count = generate_citation_influence_insights(db, workspace_id, days)
+        insights_created += citation_inf_count
+        logger.info("P11 citation influence insights: %d", citation_inf_count)
+    except Exception as e:
+        logger.warning("Citation influence generation failed (non-fatal): %s", e)
+
+    try:
+        cat_own_count = generate_category_ownership_insights(db, workspace_id, days)
+        insights_created += cat_own_count
+        logger.info("P11 category ownership insights: %d", cat_own_count)
+    except Exception as e:
+        logger.warning("Category ownership generation failed (non-fatal): %s", e)
+
+    db.commit()
+
     return {
         "insights_created": insights_created,
         "competitors_analyzed": len(competitors),
+        "citations_extracted": citations_stored,
     }

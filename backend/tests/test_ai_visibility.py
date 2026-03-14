@@ -71,7 +71,23 @@ from app.services.ai_visibility.correlation_engine import (
     _generate_short_title,
     _generate_reasoning,
 )
-from app.models.models import InsightType
+from app.models.models import InsightType, PromptCategory, PromptEngineCitation, CategoryVisibility
+from app.services.ai_visibility.citation_extraction import (
+    extract_citations_from_response,
+    _extract_domain,
+)
+from app.services.ai_visibility.strategy_alerts import (
+    _get_strategy_actions,
+    STRATEGY_MAP,
+    CONFIDENCE_THRESHOLD,
+)
+from app.services.ai_visibility.citation_influence import (
+    compute_citation_influence,
+    ENGINE_WEIGHTS,
+)
+from app.services.ai_visibility.category_ownership import (
+    compute_category_ownership,
+)
 
 # ── Test DB setup ──
 
@@ -1836,4 +1852,476 @@ class TestP10InsightFields:
                 # One-liner: should end with period, no internal paragraph breaks
                 text = card["summary_text"].strip()
                 assert "\n" not in text
+
+
+# ═══════════════════════════════════════════════
+# 28. PROMPT-11: Citation Extraction
+# ═══════════════════════════════════════════════
+
+
+class TestCitationExtraction:
+    """Tests for extract_citations_from_response and _extract_domain."""
+
+    def test_extract_domain_full_url(self):
+        assert _extract_domain("https://cursor.sh/blog") == "cursor.sh"
+
+    def test_extract_domain_with_www(self):
+        assert _extract_domain("https://www.github.com/cursor") == "github.com"
+
+    def test_extract_domain_bare(self):
+        assert _extract_domain("techcrunch.com/article") == "techcrunch.com"
+
+    def test_extract_citations_from_response_with_urls(self):
+        raw = (
+            "1. Cursor AI — best AI code editor\n"
+            "   Source: https://cursor.sh\n"
+            "2. Windsurf — great agentic IDE\n"
+            "   Source: https://windsurf.com/blog\n"
+        )
+        cits = extract_citations_from_response(raw)
+        assert len(cits) >= 2
+        urls = [c["url"] for c in cits]
+        assert "https://cursor.sh" in urls
+        assert "https://windsurf.com/blog" in urls
+
+    def test_extract_citations_from_response_bare_domains(self):
+        raw = (
+            "Sources:\n"
+            "cursor.sh\n"
+            "github.com/cursor\n"
+            "techcrunch.com/cursor-ai\n"
+        )
+        cits = extract_citations_from_response(raw)
+        assert len(cits) >= 3
+        domains = [c["domain"] for c in cits]
+        assert "cursor.sh" in domains
+        assert "github.com" in domains
+        assert "techcrunch.com" in domains
+
+    def test_extract_citations_empty_response(self):
+        assert extract_citations_from_response("") == []
+        assert extract_citations_from_response(None) == []
+
+    def test_extract_citations_no_urls(self):
+        raw = "Cursor AI is a great code editor with no links."
+        cits = extract_citations_from_response(raw)
+        # May or may not find domain-like patterns, but should not crash
+        assert isinstance(cits, list)
+
+    def test_citation_has_context(self):
+        raw = "Check out the awesome editor at https://cursor.sh for coding."
+        cits = extract_citations_from_response(raw)
+        assert len(cits) >= 1
+        assert cits[0]["context"] != ""
+
+    def test_citation_deduplication(self):
+        raw = "Visit https://cursor.sh and also https://cursor.sh for more."
+        cits = extract_citations_from_response(raw)
+        urls = [c["url"] for c in cits]
+        assert urls.count("https://cursor.sh") == 1
+
+
+# ═══════════════════════════════════════════════
+# 29. PROMPT-11: Strategy Alerts
+# ═══════════════════════════════════════════════
+
+
+class TestStrategyAlerts:
+    """Tests for strategy alert generation logic."""
+
+    def test_strategy_map_has_common_signal_types(self):
+        for sig_type in ["integration_added", "pricing_change", "feature_launch", "funding"]:
+            assert sig_type in STRATEGY_MAP, f"Missing strategy for {sig_type}"
+
+    def test_get_strategy_actions_integration(self):
+        actions = _get_strategy_actions("integration_added", "Cursor AI", "best ai code editors")
+        assert len(actions) >= 2
+        assert any("integration" in a.lower() for a in actions)
+
+    def test_get_strategy_actions_pricing(self):
+        actions = _get_strategy_actions("pricing_change", "HubSpot", "best crm tools")
+        assert len(actions) >= 2
+        assert any("pricing" in a.lower() for a in actions)
+
+    def test_get_strategy_actions_unknown_type_uses_default(self):
+        actions = _get_strategy_actions("unknown_type", "ACME", "some prompt")
+        assert len(actions) >= 2
+
+    def test_get_strategy_actions_personalizes_competitor(self):
+        actions = _get_strategy_actions("funding", "Cursor AI", "best ai code editors")
+        # At least one action should mention the competitor name
+        assert any("Cursor AI" in a for a in actions)
+
+    def test_confidence_threshold_is_reasonable(self):
+        assert 30.0 <= CONFIDENCE_THRESHOLD <= 80.0
+
+    def test_strategy_alert_e2e(self, db, workspace, competitor, billing):
+        """Strategy alerts are generated for ai_impact insights with positive delta."""
+        ws_id = str(workspace.id)
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        tp = AITrackedPrompt(
+            workspace_id=workspace.id,
+            prompt_text="best crm strategy test",
+            normalized_text=normalize_prompt("best crm strategy test"),
+            source_type="manual",
+            is_active=True,
+        )
+        db.add(tp)
+        db.flush()
+
+        from app.services.ai_visibility.prompt_execution import run_prompt_globally
+        from app.services.ai_visibility.workspace_filtering import filter_results_for_workspace
+        run_prompt_globally(db, "best crm strategy test", today)
+        db.commit()
+        filter_results_for_workspace(db, ws_id, today)
+        db.commit()
+
+        ce = CompetitorEvent(
+            workspace_id=workspace.id,
+            competitor_id=competitor.id,
+            signal_type="integration_added",
+            title="New Salesforce integration launched",
+            source_url="https://hubspot.com/integrations",
+            severity="high",
+        )
+        db.add(ce)
+        db.commit()
+
+        res = client.post(f"/api/workspaces/{ws_id}/ai-visibility/insights/correlate?days=7")
+        assert res.status_code == 200
+
+        strategy_insights = db.query(AIImpactInsight).filter(
+            AIImpactInsight.workspace_id == workspace.id,
+            AIImpactInsight.insight_type == "ai_strategy_alert",
+        ).all()
+
+        # Strategy alerts should exist if there are qualifying ai_impact insights
+        for sa in strategy_insights:
+            assert sa.strategy_actions is not None
+            assert isinstance(sa.strategy_actions, list)
+            assert len(sa.strategy_actions) >= 1
+            assert sa.short_title is not None
+            assert "Strategy" in sa.short_title
+
+
+# ═══════════════════════════════════════════════
+# 30. PROMPT-11: Citation Influence
+# ═══════════════════════════════════════════════
+
+
+class TestCitationInfluence:
+    """Tests for citation influence scoring."""
+
+    def test_engine_weights_exist(self):
+        for eng in ["chatgpt", "perplexity", "claude", "gemini"]:
+            assert eng in ENGINE_WEIGHTS
+
+    def test_perplexity_has_higher_weight(self):
+        assert ENGINE_WEIGHTS["perplexity"] > ENGINE_WEIGHTS["claude"]
+
+    def test_compute_citation_influence_empty(self, db, workspace):
+        result = compute_citation_influence(db, str(workspace.id), days=7)
+        assert result == {}
+
+
+# ═══════════════════════════════════════════════
+# 31. PROMPT-11: Category Ownership
+# ═══════════════════════════════════════════════
+
+
+class TestCategoryOwnership:
+    """Tests for category ownership computation."""
+
+    def test_compute_category_ownership_no_categories(self, db, workspace):
+        result = compute_category_ownership(db, str(workspace.id))
+        assert result == []
+
+    def test_compute_category_ownership_with_category(self, db, workspace, competitor, billing):
+        ws_id = str(workspace.id)
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        cat = PromptCategory(
+            workspace_id=workspace.id,
+            category_name="Test Category",
+            description="Test",
+        )
+        db.add(cat)
+        db.flush()
+
+        tp = AITrackedPrompt(
+            workspace_id=workspace.id,
+            prompt_text="best crm category ownership test",
+            normalized_text=normalize_prompt("best crm category ownership test"),
+            source_type="manual",
+            is_active=True,
+            category_id=cat.id,
+        )
+        db.add(tp)
+        db.flush()
+
+        from app.services.ai_visibility.prompt_execution import run_prompt_globally
+        from app.services.ai_visibility.workspace_filtering import filter_results_for_workspace
+        run_prompt_globally(db, "best crm category ownership test", today)
+        db.commit()
+        filter_results_for_workspace(db, ws_id, today)
+        db.commit()
+
+        result = compute_category_ownership(db, ws_id)
+        # Result depends on whether competitor was mentioned — either empty or has data
+        assert isinstance(result, list)
+        if result:
+            assert result[0]["category_name"] == "Test Category"
+            assert "competitors" in result[0]
+
+
+# ═══════════════════════════════════════════════
+# 32. PROMPT-11: Prompt Category CRUD API
+# ═══════════════════════════════════════════════
+
+
+class TestPromptCategoryCRUD:
+    """Tests for prompt category CRUD API endpoints."""
+
+    def test_create_category(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        res = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories",
+            json={"category_name": "AI Code Editors", "description": "Code editing tools"},
+        )
+        assert res.status_code == 201
+        data = res.json()
+        assert data["category_name"] == "AI Code Editors"
+        assert data["description"] == "Code editing tools"
+        assert "id" in data
+
+    def test_create_duplicate_category_fails(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories",
+            json={"category_name": "Duplicate Cat"},
+        )
+        res = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories",
+            json={"category_name": "Duplicate Cat"},
+        )
+        assert res.status_code == 409
+
+    def test_list_categories(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories",
+            json={"category_name": "Cat List Test"},
+        )
+        res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/categories")
+        assert res.status_code == 200
+        cats = res.json()
+        assert isinstance(cats, list)
+        names = [c["category_name"] for c in cats]
+        assert "Cat List Test" in names
+
+    def test_delete_category(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        res = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories",
+            json={"category_name": "To Delete"},
+        )
+        cat_id = res.json()["id"]
+        del_res = client.delete(f"/api/workspaces/{ws_id}/ai-visibility/categories/{cat_id}")
+        assert del_res.status_code == 204
+
+    def test_assign_prompt_to_category(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        # Create category
+        cat_res = client.post(
+            f"/api/workspaces/{ws_id}/ai-visibility/categories",
+            json={"category_name": "Assign Test Cat"},
+        )
+        cat_id = cat_res.json()["id"]
+
+        # Create tracked prompt
+        tp = AITrackedPrompt(
+            workspace_id=workspace.id,
+            prompt_text="best assign prompt category test",
+            normalized_text=normalize_prompt("best assign prompt category test"),
+            source_type="manual",
+            is_active=True,
+        )
+        db.add(tp)
+        db.commit()
+
+        # Assign prompt to category
+        res = client.put(
+            f"/api/workspaces/{ws_id}/ai-visibility/prompts/{tp.id}/category?category_id={cat_id}",
+        )
+        assert res.status_code == 200
+        assert res.json()["category_id"] == cat_id
+
+    def test_uncategorize_prompt(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        tp = AITrackedPrompt(
+            workspace_id=workspace.id,
+            prompt_text="best uncat prompt test",
+            normalized_text=normalize_prompt("best uncat prompt test"),
+            source_type="manual",
+            is_active=True,
+        )
+        db.add(tp)
+        db.commit()
+
+        res = client.put(
+            f"/api/workspaces/{ws_id}/ai-visibility/prompts/{tp.id}/category",
+        )
+        assert res.status_code == 200
+        assert res.json()["category_id"] is None
+
+
+# ═══════════════════════════════════════════════
+# 33. PROMPT-11: New Insight Types in Feed
+# ═══════════════════════════════════════════════
+
+
+class TestP11InsightTypesEnum:
+    """Tests that InsightType enum has the new PROMPT-11 values."""
+
+    def test_strategy_alert_enum(self):
+        assert InsightType.AI_STRATEGY_ALERT.value == "ai_strategy_alert"
+
+    def test_citation_influence_enum(self):
+        assert InsightType.AI_CITATION_INFLUENCE.value == "ai_citation_influence"
+
+    def test_category_ownership_enum(self):
+        assert InsightType.AI_CATEGORY_OWNERSHIP.value == "ai_category_ownership"
+
+    def test_existing_enums_preserved(self):
+        assert InsightType.AI_IMPACT.value == "ai_impact"
+        assert InsightType.AI_VISIBILITY_HIJACK.value == "ai_visibility_hijack"
+        assert InsightType.AI_VISIBILITY_LOSS.value == "ai_visibility_loss"
+        assert InsightType.AI_DOMINANCE.value == "ai_dominance"
+
+
+# ═══════════════════════════════════════════════
+# 34. PROMPT-11: Backward Compatibility Regression
+# ═══════════════════════════════════════════════
+
+
+class TestP11BackwardCompatibility:
+    """Ensure P11 changes don't break existing flows."""
+
+    def test_tracked_prompt_without_category(self, db, workspace, billing):
+        """Prompts without category_id must still work."""
+        tp = AITrackedPrompt(
+            workspace_id=workspace.id,
+            prompt_text="best backward compat p11 test",
+            normalized_text=normalize_prompt("best backward compat p11 test"),
+            source_type="manual",
+            is_active=True,
+        )
+        db.add(tp)
+        db.commit()
+        db.refresh(tp)
+        assert tp.category_id is None
+        assert tp.id is not None
+
+    def test_insight_without_p11_fields(self, db, workspace, competitor, billing):
+        """Insights without strategy_actions/influential_sources/category_data must still work."""
+        insight = AIImpactInsight(
+            workspace_id=workspace.id,
+            competitor_id=competitor.id,
+            insight_type="ai_impact",
+            signal_type="pricing_change",
+            signal_title="Test",
+            visibility_before=0,
+            visibility_after=1,
+            impact_score=50.0,
+            priority_level="P2",
+        )
+        db.add(insight)
+        db.commit()
+        db.refresh(insight)
+        assert insight.strategy_actions is None
+        assert insight.influential_sources is None
+        assert insight.category_data is None
+
+    def test_correlate_returns_citations_extracted(self, db, workspace, competitor, billing):
+        """Correlation endpoint now returns citations_extracted count."""
+        ws_id = str(workspace.id)
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        tp = AITrackedPrompt(
+            workspace_id=workspace.id,
+            prompt_text="best crm p11 compat test",
+            normalized_text=normalize_prompt("best crm p11 compat test"),
+            source_type="manual",
+            is_active=True,
+        )
+        db.add(tp)
+        db.flush()
+
+        from app.services.ai_visibility.prompt_execution import run_prompt_globally
+        from app.services.ai_visibility.workspace_filtering import filter_results_for_workspace
+        run_prompt_globally(db, "best crm p11 compat test", today)
+        db.commit()
+        filter_results_for_workspace(db, ws_id, today)
+        db.commit()
+
+        res = client.post(f"/api/workspaces/{ws_id}/ai-visibility/insights/correlate?days=7")
+        assert res.status_code == 200
+        data = res.json()
+        assert "insights_created" in data
+        assert "competitors_analyzed" in data
+        assert "citations_extracted" in data
+
+    def test_compact_card_has_strategy_actions_field(self, db, workspace, competitor, billing):
+        """Compact cards should now include strategy_actions (possibly null)."""
+        ws_id = str(workspace.id)
+        today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        tp = AITrackedPrompt(
+            workspace_id=workspace.id,
+            prompt_text="best crm compact p11 test",
+            normalized_text=normalize_prompt("best crm compact p11 test"),
+            source_type="manual",
+            is_active=True,
+        )
+        db.add(tp)
+        db.flush()
+
+        from app.services.ai_visibility.prompt_execution import run_prompt_globally
+        from app.services.ai_visibility.workspace_filtering import filter_results_for_workspace
+        run_prompt_globally(db, "best crm compact p11 test", today)
+        db.commit()
+        filter_results_for_workspace(db, ws_id, today)
+        db.commit()
+
+        ce = CompetitorEvent(
+            workspace_id=workspace.id,
+            competitor_id=competitor.id,
+            signal_type="pricing_change",
+            title="Price increase for enterprise",
+            source_url="https://hubspot.com/pricing",
+            severity="high",
+        )
+        db.add(ce)
+        db.commit()
+
+        client.post(f"/api/workspaces/{ws_id}/ai-visibility/insights/correlate?days=7")
+        res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/insights/compact")
+        assert res.status_code == 200
+        cards = res.json()
+        # All cards should have strategy_actions field (may be null)
+        for card in cards:
+            assert "strategy_actions" in card
+
+    def test_citations_endpoint_returns_empty_initially(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/citations")
+        assert res.status_code == 200
+        assert res.json() == []
+
+    def test_category_visibility_endpoint_returns_empty(self, db, workspace, billing):
+        ws_id = str(workspace.id)
+        res = client.get(f"/api/workspaces/{ws_id}/ai-visibility/category-visibility")
+        assert res.status_code == 200
+        assert res.json() == []
 

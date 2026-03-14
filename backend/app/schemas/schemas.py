@@ -635,6 +635,8 @@ class AIInsightCompactRead(BaseModel):
     correlation_confidence: float | None
     summary_text: str | None
     timestamp: datetime
+    # PROMPT-11: strategy actions preview for compact card
+    strategy_actions: list[str] | None = None
 
 
 class AIInsightDetailRead(BaseModel):
@@ -686,6 +688,53 @@ class AIInsightDetailRead(BaseModel):
     signal_headline: str | None = None          # concise signal one-liner
     confidence_factors: dict[str, Any] | None = None  # explainable breakdown
     prompt_relevance_score: float | None = None  # 0.0-1.0
+
+    # J. PROMPT-11 additions
+    strategy_actions: list[str] | None = None          # recommended actions (strategy alerts)
+    influential_sources: list[dict[str, Any]] | None = None  # citation influence data
+    category_data: dict[str, Any] | None = None        # category ownership data
+
+
+# ── PROMPT-11: Prompt Categories ──
+
+
+class PromptCategoryCreate(BaseModel):
+    category_name: str
+    description: str | None = None
+
+
+class PromptCategoryRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    category_name: str
+    description: str | None
+    created_at: datetime
+
+
+class PromptEngineCitationRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    prompt_run_id: uuid.UUID
+    engine: str
+    competitor_id: uuid.UUID | None
+    citation_url: str
+    citation_domain: str | None
+    citation_context: str | None
+    rank: int | None
+    created_at: datetime
+
+
+class CategoryVisibilityRead(ORMBase):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    category_id: uuid.UUID
+    competitor_id: uuid.UUID
+    visibility_share: float
+    engine_count: int
+    prompt_count: int
+    total_mentions: int
+    time_window: str | None
+    computed_at: datetime
 
 
 class VisibilityTrendPoint(BaseModel):

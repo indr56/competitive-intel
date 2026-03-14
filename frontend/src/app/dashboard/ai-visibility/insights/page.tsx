@@ -20,6 +20,9 @@ import {
   ChevronRight,
   CheckCircle,
   Info,
+  Target,
+  Link2,
+  BarChart3,
 } from "lucide-react";
 import { useActiveWorkspace, useFetch } from "@/lib/hooks";
 import { aiVisibility, competitors as competitorsApi } from "@/lib/api";
@@ -44,6 +47,9 @@ const INSIGHT_TYPE_META: Record<string, { icon: typeof Lightbulb; color: string;
   ai_visibility_hijack: { icon: Eye, color: "text-emerald-600 bg-emerald-50", label: "Visibility Hijack" },
   ai_visibility_loss: { icon: EyeOff, color: "text-red-600 bg-red-50", label: "Visibility Loss" },
   ai_dominance: { icon: Crown, color: "text-amber-600 bg-amber-50", label: "AI Dominance" },
+  ai_strategy_alert: { icon: Target, color: "text-orange-600 bg-orange-50", label: "Strategy Alert" },
+  ai_citation_influence: { icon: Link2, color: "text-cyan-600 bg-cyan-50", label: "Citation Influence" },
+  ai_category_ownership: { icon: BarChart3, color: "text-indigo-600 bg-indigo-50", label: "Category Ownership" },
 };
 
 export default function AIImpactInsightsPage() {
@@ -314,6 +320,14 @@ function CompactInsightCard({ card, onOpen }: { card: AIInsightCompact; onOpen: 
         <p className="text-[11px] text-gray-500 mt-2 line-clamp-1 leading-relaxed">{card.summary_text}</p>
       )}
 
+      {/* Row 5: Strategy action preview (PROMPT-11) */}
+      {card.strategy_actions && card.strategy_actions.length > 0 && (
+        <p className="text-[11px] text-orange-600 mt-1 line-clamp-1">
+          <Target className="inline h-3 w-3 mr-0.5 -mt-0.5" />
+          {card.strategy_actions[0]}
+        </p>
+      )}
+
       {/* Timestamp */}
       <p className="text-[10px] text-gray-400 mt-2">{new Date(card.timestamp).toLocaleString()}</p>
     </button>
@@ -560,7 +574,69 @@ function DetailContent({ detail: d }: { detail: AIInsightDetail }) {
         </Section>
       )}
 
-      {/* H. Actions */}
+      {/* H. Strategy Actions (PROMPT-11) */}
+      {d.strategy_actions && d.strategy_actions.length > 0 && (
+        <Section title="Recommended Strategy Actions">
+          <ol className="space-y-1.5">
+            {d.strategy_actions.map((action, i) => (
+              <li key={i} className="flex items-start gap-2 text-sm text-gray-700">
+                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-orange-100 text-orange-600 text-[10px] font-bold flex items-center justify-center mt-0.5">{i + 1}</span>
+                {action}
+              </li>
+            ))}
+          </ol>
+        </Section>
+      )}
+
+      {/* I. Influential Sources (PROMPT-11) */}
+      {d.influential_sources && d.influential_sources.length > 0 && (
+        <Section title="Influential Citation Sources">
+          <div className="space-y-2">
+            {d.influential_sources.slice(0, 5).map((src, i) => (
+              <div key={i} className="flex items-center justify-between text-xs border-b border-gray-100 pb-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Link2 className="h-3 w-3 text-cyan-500" />
+                  <a href={src.url} target="_blank" rel="noopener noreferrer" className="text-cyan-600 hover:underline font-medium">
+                    {src.domain}
+                  </a>
+                  <span className="text-gray-400">({src.count}×)</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  {src.engines.map((eng: string) => (
+                    <span key={eng} className={`text-[9px] px-1 py-0.5 rounded ${ENGINE_BADGE[eng] ?? "bg-gray-100 text-gray-600"}`}>{eng}</span>
+                  ))}
+                  <span className="text-gray-500 font-medium ml-1">Score: {src.score}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* J. Category Ownership (PROMPT-11) */}
+      {d.category_data && d.category_data.competitors && (
+        <Section title={`Category: ${d.category_data.category_name}`}>
+          <p className="text-xs text-gray-400 mb-2">
+            {d.category_data.prompt_count} prompts · {d.category_data.total_mentions} total mentions
+          </p>
+          <div className="space-y-1.5">
+            {d.category_data.competitors.slice(0, 5).map((comp: any, i: number) => (
+              <div key={i} className="flex items-center gap-2">
+                <span className="text-xs font-medium text-gray-700 w-24 truncate">{comp.competitor_name}</span>
+                <div className="flex-1 bg-gray-100 rounded-full h-2 overflow-hidden">
+                  <div
+                    className={`h-2 rounded-full ${i === 0 ? "bg-indigo-500" : "bg-gray-300"}`}
+                    style={{ width: `${comp.visibility_share}%` }}
+                  />
+                </div>
+                <span className="text-xs font-bold text-gray-600 w-12 text-right">{comp.visibility_share}%</span>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* K. Actions */}
       <Section title="Actions">
         <div className="flex flex-wrap gap-2">
           {d.actions.view_signal && (
